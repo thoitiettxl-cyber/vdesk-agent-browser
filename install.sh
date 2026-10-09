@@ -181,6 +181,19 @@ configure_localhost() {
   printf 'localhost is 127.0.0.1 only; IPv6 is disabled\n'
 }
 
+configure_aaudio() {
+  if [[ ! -S /tmp/.pulse-socket && ! -f /etc/profile.d/droidspaces_env.sh ]]; then
+    return 0
+  fi
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get install -y pulseaudio-utils
+  install -d -m 755 /usr/local/sbin
+  install -m 755 "${SCRIPT_DIR}/scripts/vdesk-aaudio.sh" /usr/local/sbin/vdesk-aaudio.sh
+  install -m 644 "${SCRIPT_DIR}/systemd/vdesk-audio.service" /etc/systemd/system/vdesk-audio.service
+  UNIT_NAMES+=(vdesk-audio)
+  printf 'AAudio sink will be tuned to 44100 Hz on boot\n'
+}
+
 configure_pulse() {
   local server=""
   local from_profile=""
@@ -287,6 +300,7 @@ main() {
     printf 'warning: Chromium is running as root with --no-sandbox\n' >&2
   fi
 
+  configure_aaudio
   configure_localhost
   configure_pulse
   enable_units

@@ -25,6 +25,8 @@ done
 rm -f /etc/systemd/system/vdesk-browser.service.d/pulse.conf
 rmdir /etc/systemd/system/vdesk-browser.service.d 2>/dev/null || true
 rm -f /etc/pulse/client.conf.d/vdesk.conf
+systemctl disable --now vdesk-audio.service || true
+rm -f /etc/systemd/system/vdesk-audio.service /usr/local/sbin/vdesk-aaudio.sh
 
 systemctl daemon-reload
 systemctl reset-failed "${UNIT_NAMES[@]}" || true

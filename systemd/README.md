@@ -36,6 +36,8 @@ If the service user is `root`, `install.sh` inserts `--no-sandbox` into `vdesk-b
 
 The client file is the one Chromium uses. The browser clears its environment after startup, so a systemd `Environment=` line alone does not reach the audio process. Shared memory must stay off because the socket is bind-mounted from another mount namespace.
 
+On that same host, `vdesk-audio.service` reloads `module-aaudio-sink` at 44100 Hz with `pm=0` and a 120 ms buffer. The default sink is 48000 Hz in low-latency mode, and PulseAudio then resamples Chromium's 44100 Hz stream with `speex-float-1`. After the retune, `pactl list sink-inputs` should show `Resample method: copy`.
+
 ## VNC
 
 `vdesk-vnc.service` listens with `-listen localhost -no6`. That binds `127.0.0.1:5900`. It does not listen on the Wi-Fi address.

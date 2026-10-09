@@ -109,6 +109,7 @@ Nếu lệnh lỗi, xem `systemctl status vdesk-browser` và `curl -s http://127
 | VNC báo server không chạy | Client dùng `localhost` hoặc `127.0.0.1`, cổng `5900`. Không dùng IP Wi-Fi. x11vnc dùng `-listen localhost -no6`. noVNC nối `127.0.0.1:5900`. Nếu IPv6 tắt, `install.sh` gỡ `localhost` khỏi dòng `::1` trong `/etc/hosts`. |
 | Sau reboot không lên | `systemctl is-enabled vdesk-xvfb vdesk-wm vdesk-vnc vdesk-novnc vdesk-browser` |
 | Mở nhạc không có tiếng | Container không có `/dev/snd`. Nếu có socket `/tmp/.pulse-socket`, hoặc `PULSE_SERVER` trong `/etc/profile.d/droidspaces_env.sh`, `install.sh` ghi `/etc/pulse/client.conf.d/vdesk.conf` (`enable-shm = no`) và drop-in `PULSE_SERVER` cho `vdesk-browser`. Chromium xóa environment sau khi khởi động, nên chỉ đặt biến trong unit là không đủ. `journalctl -u vdesk-browser` không được còn `PcmOpen: default`. |
+| Nhạc nghe kém | Sink AAudio mặc định là 48000 Hz, chế độ low-latency, và resample `speex-float-1`. `vdesk-audio` chỉnh sink về 44100 Hz, `pm=0`, buffer 120 ms. `pactl list sink-inputs` phải thấy `Resample method: copy`. |
 
 ## Gỡ
 
