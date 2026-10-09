@@ -35,3 +35,11 @@ If the service user is `root`, `install.sh` inserts `--no-sandbox` into `vdesk-b
 - `/etc/systemd/system/vdesk-browser.service.d/pulse.conf`
 
 The client file is the one Chromium uses. The browser clears its environment after startup, so a systemd `Environment=` line alone does not reach the audio process. Shared memory must stay off because the socket is bind-mounted from another mount namespace.
+
+## VNC
+
+`vdesk-vnc.service` listens with `-listen localhost -no6`. That binds `127.0.0.1:5900`. It does not listen on the Wi-Fi address.
+
+`vdesk-novnc.service` proxies to `127.0.0.1:5900`, not the hostname `localhost`. On a host with IPv6 disabled, that hostname can still resolve to `::1` and the connection fails.
+
+If `/proc/sys/net/ipv6/conf/all/disable_ipv6` is `1`, `install.sh` removes `localhost` from the `::1` line in `/etc/hosts`. `uninstall.sh` does not restore that line.

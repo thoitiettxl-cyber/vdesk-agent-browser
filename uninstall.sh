@@ -31,3 +31,4 @@ systemctl reset-failed "${UNIT_NAMES[@]}" || true
 printf 'removed vdesk systemd units\n'
 printf 'left in place: VNC password file, Chromium profile, apt packages, playwright-cli\n'
 printf 'removed PulseAudio client drop-in if install.sh created one\n'
+printf 'left /etc/hosts unchanged\n'

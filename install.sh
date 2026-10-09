@@ -158,6 +158,29 @@ install_playwright() {
   fi
 }
 
+configure_localhost() {
+  local hosts=/etc/hosts
+  local disabled=""
+
+  if [[ ! -f ${hosts} ]]; then
+    return 0
+  fi
+  if [[ -r /proc/sys/net/ipv6/conf/all/disable_ipv6 ]]; then
+    disabled=$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6)
+  fi
+  if [[ ${disabled} != "1" ]]; then
+    return 0
+  fi
+
+  # IPv6 is off, but Debian still lists localhost on ::1. Clients that try
+  # that address fail before reaching x11vnc. Keep ip6-localhost on the line.
+  sed -i -E 's/^(::1[[:space:]]+)localhost[[:space:]]+/\1/' "${hosts}"
+  if ! grep -qE '^127\.0\.0\.1[[:space:]]+localhost([[:space:]]|$)' "${hosts}"; then
+    printf '127.0.0.1\tlocalhost\n' >> "${hosts}"
+  fi
+  printf 'localhost is 127.0.0.1 only; IPv6 is disabled\n'
+}
+
 configure_pulse() {
   local server=""
   local from_profile=""
@@ -264,6 +287,7 @@ main() {
     printf 'warning: Chromium is running as root with --no-sandbox\n' >&2
   fi
 
+  configure_localhost
   configure_pulse
   enable_units
   install_playwright "${skill_user}" "${skill_home}"

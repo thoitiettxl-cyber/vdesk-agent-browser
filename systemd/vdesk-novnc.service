@@ -7,7 +7,7 @@ After=vdesk-vnc.service
 
 [Service]
 User=@VDESK_USER@
-ExecStart=/usr/bin/websockify --web=/usr/share/novnc --heartbeat=30 127.0.0.1:6080 localhost:5900
+ExecStart=/usr/bin/websockify --web=/usr/share/novnc --heartbeat=30 127.0.0.1:6080 127.0.0.1:5900
 Restart=always
 RestartSec=2
 
