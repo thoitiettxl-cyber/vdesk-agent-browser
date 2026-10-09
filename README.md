@@ -2,7 +2,7 @@
 
 Màn hình ảo cho agent: Chromium chạy trên Xvfb, người xem qua VNC hoặc noVNC, Pi điều khiển cùng trình duyệt đó bằng CDP. Không cài desktop XFCE đầy đủ. Chỉ có trình quản lý cửa sổ `xfwm4`.
 
-Bản này dùng Chromium trong kho Debian/Ubuntu, không dùng Google Chrome. Trên arm64 không có gói Chrome chính thức.
+Bản này dùng gói `chromium` của Debian, không dùng Google Chrome. Trên arm64 không có gói Chrome chính thức.
 
 ## Thành phần
 
@@ -29,8 +29,8 @@ Mỗi phần là một service systemd. Service nào chết thì systemd bật l
 
 ## Yêu cầu
 
-- Debian 13 hoặc Ubuntu 24.04
-- amd64 hoặc arm64
+- Debian 13, amd64 hoặc arm64. Đây là bản đã thử.
+- Ubuntu 24.04 chưa kiểm tra. Trên Ubuntu, gói `chromium` trong apt là gói ảo, và `chromium-browser` chỉ chuyển tiếp sang Snap. Snap không khớp `/usr/bin/chromium` và `--user-data-dir` trong service.
 - systemd là PID 1
 - tài khoản sẽ chạy service đã tồn tại
 - quyền root để cài gói và unit
@@ -51,7 +51,7 @@ sudo ./install.sh
 
 Script hỏi hai thứ, rồi hỏi mật khẩu VNC hai lần qua `x11vnc -storepasswd`:
 
-- user chạy service, mặc định `root`
+- user chạy service, mặc định `vdesk`. Gõ `root` nếu cố ý chạy bằng root
 - độ phân giải, mặc định `1920x1200`
 
 Mật khẩu chỉ được ghi vào `~user/.vnc/passwd` trên máy đích. Repo không chứa mật khẩu.
@@ -128,4 +128,6 @@ Script dừng, disable và xoá năm unit. Không xoá profile Chromium, file m�
 
 This repository reproduces a headless agent desktop: Xvfb display `:1`, `xfwm4`, Chromium with a localhost CDP port `9222`, `x11vnc` on `127.0.0.1:5900`, and noVNC/websockify on `127.0.0.1:6080`. Pi attaches with `playwright-cli attach --cdp=http://127.0.0.1:9222`.
 
-`sudo ./install.sh` installs the Debian/Ubuntu packages, asks for the service user and resolution, prompts for a VNC password, installs the systemd units, and installs `@playwright/cli`. Access the desktop only through an SSH tunnel. Do not expose ports `5900`, `6080`, or `9222`.
+Tested on Debian 13. Ubuntu 24.04 is not verified: its apt `chromium` package is a transitional Snap wrapper, so `/usr/bin/chromium` and `--user-data-dir` in the service may not work.
+
+`sudo ./install.sh` installs the packages, asks for the service user (default `vdesk`) and resolution, prompts for a VNC password, installs the systemd units, and installs `@playwright/cli`. Access the desktop only through an SSH tunnel. Do not expose ports `5900`, `6080`, or `9222`.

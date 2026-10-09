@@ -195,7 +195,7 @@ main() {
   need_systemd
   need_tty
 
-  service_user=$(prompt "Service user" "root")
+  service_user=$(prompt "Service user" "vdesk")
   validate_user "${service_user}"
   home=$(user_home "${service_user}")
 
