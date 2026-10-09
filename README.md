@@ -56,7 +56,7 @@ Script hỏi hai thứ, rồi hỏi mật khẩu VNC hai lần qua `x11vnc -stor
 
 Mật khẩu chỉ được ghi vào `~user/.vnc/passwd` trên máy đích. Repo không chứa mật khẩu.
 
-Script cài các gói `xvfb xfwm4 x11vnc novnc websockify xdotool ffmpeg dbus-x11 chromium`, thêm `nodejs`, `npm`, `curl` và `iproute2` để cài `playwright-cli` và in kết quả kiểm tra. Sau đó nó chép unit, `enable --now`, cài `@playwright/cli` và skill `playwright-cli`.
+Script cài các gói `xvfb xfwm4 x11vnc novnc websockify xdotool ffmpeg dbus-x11 chromium libpulse0`, thêm `nodejs`, `npm`, `curl` và `iproute2` để cài `playwright-cli` và in kết quả kiểm tra. Sau đó nó chép unit, `enable --now`, cài `@playwright/cli` và skill `playwright-cli`.
 
 Nếu user service là root, script thêm `--no-sandbox`. User thường không có cờ này.
 
@@ -107,6 +107,7 @@ Nếu lệnh lỗi, xem `systemctl status vdesk-browser` và `curl -s http://127
 | `9222` bị chiếm | `ss -ltnp \| grep 9222`. Dừng tiến trình Chromium khác đang giữ cổng, rồi `systemctl restart vdesk-browser`. |
 | VNC từ xa không vào | Đúng như thiết kế. Tunnel SSH trước. `ss` phải thấy `127.0.0.1:5900`, không thấy `0.0.0.0:5900`. |
 | Sau reboot không lên | `systemctl is-enabled vdesk-xvfb vdesk-wm vdesk-vnc vdesk-novnc vdesk-browser` |
+| Mở nhạc không có tiếng | Container không có `/dev/snd`. Nếu có socket `/tmp/.pulse-socket`, hoặc `PULSE_SERVER` trong `/etc/profile.d/droidspaces_env.sh`, `install.sh` ghi `/etc/pulse/client.conf.d/vdesk.conf` (`enable-shm = no`) và drop-in `PULSE_SERVER` cho `vdesk-browser`. Chromium xóa environment sau khi khởi động, nên chỉ đặt biến trong unit là không đủ. `journalctl -u vdesk-browser` không được còn `PcmOpen: default`. |
 
 ## Gỡ
 
@@ -130,4 +131,4 @@ This repository reproduces a headless agent desktop: Xvfb display `:1`, `xfwm4`,
 
 Tested on Debian 13. Ubuntu 24.04 is not verified: its apt `chromium` package is a transitional Snap wrapper, so `/usr/bin/chromium` and `--user-data-dir` in the service may not work.
 
-`sudo ./install.sh` installs the packages, asks for the service user (default `vdesk`) and resolution, prompts for a VNC password, installs the systemd units, and installs `@playwright/cli`. Access the desktop only through an SSH tunnel. Do not expose ports `5900`, `6080`, or `9222`.
+`sudo ./install.sh` installs the packages, asks for the service user (default `vdesk`) and resolution, prompts for a VNC password, installs the systemd units, and installs `@playwright/cli`. If `/tmp/.pulse-socket` exists, or Droidspaces exports `PULSE_SERVER`, the script points PulseAudio clients at that socket and disables shared memory. Chromium has no ALSA device in that container, and it clears its process environment, so the client config is required for audio. Access the desktop only through an SSH tunnel. Do not expose ports `5900`, `6080`, or `9222`.

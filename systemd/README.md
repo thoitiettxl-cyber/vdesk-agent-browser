@@ -26,3 +26,12 @@ Do not add `--no-sandbox` for that account. Chromium's sandbox should stay on.
 ## Root
 
 If the service user is `root`, `install.sh` inserts `--no-sandbox` into `vdesk-browser.service`. That is required for Chromium to start, and it is less safe. Use root only on a disposable test machine.
+
+## PulseAudio
+
+`install.sh` does not change audio unless `/tmp/.pulse-socket` exists or `/etc/profile.d/droidspaces_env.sh` exports `PULSE_SERVER`. In that case it writes:
+
+- `/etc/pulse/client.conf.d/vdesk.conf` with `default-server` and `enable-shm = no`
+- `/etc/systemd/system/vdesk-browser.service.d/pulse.conf`
+
+The client file is the one Chromium uses. The browser clears its environment after startup, so a systemd `Environment=` line alone does not reach the audio process. Shared memory must stay off because the socket is bind-mounted from another mount namespace.

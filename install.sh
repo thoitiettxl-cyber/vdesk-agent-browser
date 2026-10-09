@@ -91,6 +91,7 @@ install_packages() {
     ffmpeg \
     dbus-x11 \
     chromium \
+    libpulse0 \
     nodejs \
     npm \
     curl \
@@ -155,6 +156,45 @@ install_playwright() {
   if [[ ! -f ${skill_home}/.agents/skills/playwright-cli/SKILL.md ]]; then
     die "playwright-cli skill was not installed for ${skill_user}"
   fi
+}
+
+configure_pulse() {
+  local server=""
+  local from_profile=""
+
+  if [[ -S /tmp/.pulse-socket ]]; then
+    server="unix:/tmp/.pulse-socket"
+  fi
+  if [[ -f /etc/profile.d/droidspaces_env.sh ]]; then
+    from_profile=$(sed -n "s/^export PULSE_SERVER='\\([^']*\\)'$/\\1/p" /etc/profile.d/droidspaces_env.sh | head -n 1)
+    if [[ -n ${from_profile} ]]; then
+      server=${from_profile}
+    fi
+  fi
+  if [[ -z ${server} ]]; then
+    return 0
+  fi
+  if [[ ! ${server} =~ ^unix:/[^[:space:]\'\"]+$ ]]; then
+    die "unsupported PULSE_SERVER: ${server}"
+  fi
+
+  # Chromium clears its environment after start, so the unit Environment= line
+  # is not enough. libpulse still reads this file. Shared memory is unusable
+  # when the server socket is bind-mounted from another mount namespace.
+  install -d -m 755 /etc/pulse/client.conf.d
+  cat > /etc/pulse/client.conf.d/vdesk.conf <<EOF
+default-server = ${server}
+enable-shm = no
+EOF
+  chmod 644 /etc/pulse/client.conf.d/vdesk.conf
+
+  install -d -m 755 /etc/systemd/system/vdesk-browser.service.d
+  cat > /etc/systemd/system/vdesk-browser.service.d/pulse.conf <<EOF
+[Service]
+Environment=PULSE_SERVER=${server}
+EOF
+  chmod 644 /etc/systemd/system/vdesk-browser.service.d/pulse.conf
+  printf 'PulseAudio client set to %s\n' "${server}"
 }
 
 enable_units() {
@@ -224,6 +264,7 @@ main() {
     printf 'warning: Chromium is running as root with --no-sandbox\n' >&2
   fi
 
+  configure_pulse
   enable_units
   install_playwright "${skill_user}" "${skill_home}"
   print_checks
