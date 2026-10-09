@@ -1,0 +1,14 @@
+# Template. install.sh replaces @VDESK_USER@ and @VDESK_GEOMETRY@.
+# Prefer a normal user. See systemd/README.md.
+
+[Unit]
+Description=Xvfb :1
+
+[Service]
+User=@VDESK_USER@
+ExecStart=/usr/bin/Xvfb :1 -screen 0 @VDESK_GEOMETRY@x24 -ac +extension GLX +render -noreset
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

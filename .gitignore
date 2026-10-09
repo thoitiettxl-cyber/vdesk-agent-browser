@@ -1,0 +1,6 @@
+.vnc/
+*.passwd
+plainpass
+.chromium-profile/
+.env
+*.log

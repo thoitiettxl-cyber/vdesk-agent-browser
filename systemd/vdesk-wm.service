@@ -1,0 +1,19 @@
+# Template. install.sh replaces @VDESK_USER@.
+# Prefer a normal user. See systemd/README.md.
+
+[Unit]
+Description=xfwm4 on :1
+Requires=vdesk-xvfb.service
+After=vdesk-xvfb.service
+PartOf=vdesk-xvfb.service
+
+[Service]
+User=@VDESK_USER@
+Environment=DISPLAY=:1
+ExecStartPre=/bin/sh -c 'until [ -S /tmp/.X11-unix/X1 ]; do sleep 0.5; done'
+ExecStart=/usr/bin/dbus-launch --exit-with-session /usr/bin/xfwm4 --compositor=off
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,2 @@
+## Browser
+- Trước khi dùng trình duyệt, luôn chạy `playwright-cli attach --cdp=http://127.0.0.1:9222`; nếu lỗi, kiểm tra `systemctl status vdesk-browser`.

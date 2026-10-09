@@ -1,0 +1,18 @@
+# Template. install.sh replaces @VDESK_USER@ and @VDESK_HOME@.
+# The password file is created on the target machine. Do not commit it.
+
+[Unit]
+Description=x11vnc on 127.0.0.1:5900
+Requires=vdesk-xvfb.service
+After=vdesk-xvfb.service
+PartOf=vdesk-xvfb.service
+
+[Service]
+User=@VDESK_USER@
+ExecStartPre=/bin/sh -c 'until [ -S /tmp/.X11-unix/X1 ]; do sleep 0.5; done'
+ExecStart=/usr/bin/x11vnc -display :1 -localhost -shared -forever -noxdamage -rfbport 5900 -rfbauth @VDESK_HOME@/.vnc/passwd -quiet
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

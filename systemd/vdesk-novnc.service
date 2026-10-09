@@ -1,0 +1,15 @@
+# Template. install.sh replaces @VDESK_USER@.
+# websockify listens on 127.0.0.1 only. Reach it through an SSH tunnel.
+
+[Unit]
+Description=noVNC on 127.0.0.1:6080
+After=vdesk-vnc.service
+
+[Service]
+User=@VDESK_USER@
+ExecStart=/usr/bin/websockify --web=/usr/share/novnc --heartbeat=30 127.0.0.1:6080 localhost:5900
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
