@@ -10,10 +10,11 @@ Boot mặc định là headless. Không có Xvfb, xfwm4, x11vnc hay websockify.
 
 ```text
 headless (mặc định)
-  Chromium --headless=new
+  Chromium --ozone-platform=headless
+  không có --headless=new, để UA không thành HeadlessChrome
   CDP 127.0.0.1:9222
        |
-       playwright-cli attach --cdp=http://127.0.0.1:9222
+       patchright-cli attach --cdp=http://127.0.0.1:9222 --context=host
 
 gui    vdesk mode gui
   Xvfb :1  1920x1200x24 +GLX
@@ -39,10 +40,10 @@ view   vdesk view on
 
 Profile vẫn là `~user/.chromium-profile`. Cookie và đăng nhập nằm ở đó. CDP vẫn là `127.0.0.1:9222`.
 
-Sau mỗi lần Chromium khởi động lại, phiên `playwright-cli attach` mất. Phải gắn lại:
+Sau mỗi lần Chromium khởi động lại, phiên `patchright-cli attach` mất. Phải gắn lại:
 
 ```bash
-playwright-cli attach --cdp=http://127.0.0.1:9222
+patchright-cli attach --cdp=http://127.0.0.1:9222 --context=host
 ```
 
 Output của `vdesk` có `restarted=yes` khi phải gắn lại, `restarted=no` khi không.
@@ -53,7 +54,11 @@ Không có client VNC và không có client CDP trong 10 phút thì `vdesk-idle.
 
 Launcher là `/usr/local/libexec/vdesk-chromium`. Nó gọi `/usr/lib/chromium/chromium`, không gọi wrapper `/usr/bin/chromium`, vì wrapper thêm `--enable-gpu-rasterization` và `--load-extension`.
 
-Cờ giảm RAM: `--disable-extensions`, `--disable-component-extensions-with-background-pages`, `--disable-background-networking`, `--disable-component-update`, `--disable-sync`, `--renderer-process-limit` (mặc định 2), `--process-per-site`, cache đĩa 32MB. Headless thêm `--headless=new --disable-gpu --disable-software-rasterizer`. Trên profile tạm, tổ hợp đó dùng 351411 KB PSS khi mở example.com và ảnh chụp vẫn có chữ. `--use-angle=swiftshader --enable-unsafe-swiftshader` nặng hơn, 426327 KB. Extension đã cài, kể cả uBlock Origin Lite, vẫn nằm trong profile nhưng không được nạp.
+Cờ giảm RAM: `--disable-extensions`, `--disable-component-extensions-with-background-pages`, `--disable-background-networking`, `--disable-component-update`, `--disable-sync`, `--renderer-process-limit` (mặc định 2), `--process-per-site`, cache đĩa 32MB. Headless thêm `--ozone-platform=headless --disable-gpu --disable-software-rasterizer` và `--ozone-override-screen-size` bằng độ phân giải đã cài. Không dùng `--headless=new`: trên Chromium Debian này cờ đó đổi UA thành `HeadlessChrome`. `--use-angle=swiftshader --enable-unsafe-swiftshader` bật WebGL nhưng nặng hơn nhiều, nên launcher không bật. Extension đã cài, kể cả uBlock Origin Lite, vẫn nằm trong profile nhưng không được nạp.
+
+Launcher cũng đặt `TZ=Asia/Ho_Chi_Minh`, `--lang=vi-VN`, `--accept-lang=vi-VN,vi,en-US,en` và `--disable-blink-features=AutomationControlled`. Unit `vdesk-browser` đặt cùng `TZ`. `--enable-automation` và `--headless` trong `/etc/vdesk/chromium-extra` bị từ chối. Độ phân giải cửa sổ và màn hình headless lấy từ `/etc/vdesk/config`, mặc định `1920x1200`.
+
+Trên Chromium này, `Intl` báo múi giờ là `Asia/Saigon`. Đó là tên ICU của cùng múi `Asia/Ho_Chi_Minh`, lệch UTC +7. `bot.sannysoft.com` vẫn đỏ ở WebGL vì không bật SwiftShader. `browserscan.net/bot-detection` không dùng mục đó để kết luận robot.
 
 ## RAM đã đo
 
@@ -98,7 +103,7 @@ Script hỏi hai thứ, rồi hỏi mật khẩu VNC hai lần qua `x11vnc -stor
 
 Mật khẩu chỉ được ghi vào `~user/.vnc/passwd` trên máy đích. Repo không chứa mật khẩu.
 
-Script cài các gói `xvfb xfwm4 x11vnc novnc websockify xdotool ffmpeg dbus-x11 chromium libpulse0`, thêm `nodejs`, `npm`, `curl` và `iproute2` để cài `playwright-cli` và in kết quả kiểm tra. Sau đó nó chép unit, cài `vdesk`, bật Chromium headless, cài `@playwright/cli` và skill `playwright-cli`.
+Script cài các gói `xvfb xfwm4 x11vnc novnc websockify xdotool ffmpeg dbus-x11 chromium libpulse0`, thêm `curl` và `iproute2` để in kết quả kiểm tra. Sau đó nó chép unit, cài `vdesk`, bật Chromium headless, cài `patchright-cli` 0.7.0 vào `/usr/local/lib/vdesk-patchright` và skill `patchright-cli`. Không tải Chromium của Patchright. Nếu chưa có `uv`, script cài `uv` cho root rồi dùng nó tạo venv.
 
 Xvfb, xfwm4, x11vnc và websockify được cài nhưng không `enable`. Boot không bật chúng.
 
@@ -132,13 +137,19 @@ Mở `http://127.0.0.1:6080/vnc.html` trên máy đang giữ tunnel. Không dùn
 
 Xem xong: `vdesk view off`. Chromium vẫn chạy.
 
-## Cho Pi dùng playwright-cli
+## Cho Pi dùng patchright-cli
 
-Phiên `playwright-cli attach` mất khi Chromium khởi động lại, kể cả khi `vdesk mode` hoặc `vdesk view on` phải rời headless. Pi phải gắn lại trước khi điều khiển trình duyệt:
+Pi điều khiển Chromium đang chạy bằng Patchright, qua `patchright-cli` 0.7.0. Lệnh giống `playwright-cli`, nhưng driver không gửi `Runtime.enable` lúc gắn trang. Đó là bản vá chống phát hiện CDP của Patchright, và nó vẫn có tác dụng khi `connect_over_cdp` vào Chromium có sẵn. Các cờ khởi động thì không: Patchright chỉ sửa cờ khi chính nó mở trình duyệt, nên launcher tự bỏ `--enable-automation` và `--headless`.
+
+Không chạy `patchright-cli open`. Lệnh đó mở trình duyệt khác, không dùng profile và CDP của vdesk. Không chạy `playwright-cli`.
+
+Phiên attach mất khi Chromium khởi động lại, kể cả khi `vdesk mode` hoặc `vdesk view on` phải rời headless. Pi phải gắn lại trước khi điều khiển trình duyệt:
 
 ```bash
-playwright-cli attach --cdp=http://127.0.0.1:9222
+patchright-cli attach --cdp=http://127.0.0.1:9222 --context=host
 ```
+
+`--context=host` bắt buộc. Context mới, mặc định của lệnh attach, không thấy cookie trong profile. `close` bị từ chối trên context này. `patchright-cli detach` chỉ ngắt phiên, không tắt Chromium.
 
 Nếu lệnh lỗi, xem `vdesk status`, `systemctl status vdesk-browser` và `curl -s http://127.0.0.1:9222/json/version`.
 
@@ -155,7 +166,7 @@ Nếu lệnh lỗi, xem `vdesk status`, `systemctl status vdesk-browser` và `cu
 | VNC báo server không chạy | Chạy `vdesk view on`. Client dùng `127.0.0.1`, cổng `5900`. Headless không mở cổng 5900. x11vnc dùng `-localhost -no6 -noipv6`. |
 | Sau reboot desktop cũng lên | Không đúng với bản này. `systemctl is-enabled vdesk-xvfb` phải là `disabled`. `vdesk status` lúc boot là `mode=headless`. |
 | Sau reboot không có CDP | `systemctl is-enabled vdesk-browser vdesk-apply vdesk-idle.timer` và `vdesk status`. |
-| Đổi mode xong Pi không bấm được | Attach cũ đã chết. Chạy lại `playwright-cli attach --cdp=http://127.0.0.1:9222`. |
+| Đổi mode xong Pi không bấm được | Attach cũ đã chết. Chạy lại `patchright-cli attach --cdp=http://127.0.0.1:9222 --context=host`. |
 | Mở nhạc không có tiếng | Container không có `/dev/snd`. Nếu có socket `/tmp/.pulse-socket`, hoặc `PULSE_SERVER` trong `/etc/profile.d/droidspaces_env.sh`, `install.sh` ghi `/etc/pulse/client.conf.d/vdesk.conf` (`enable-shm = no`) và drop-in `PULSE_SERVER` cho `vdesk-browser`. Chromium xóa environment sau khi khởi động, nên chỉ đặt biến trong unit là không đủ. `journalctl -u vdesk-browser` không được còn `PcmOpen: default`. Đổi mode không xóa cấu hình này. |
 | Nhạc nghe kém | Sink AAudio mặc định là 48000 Hz, chế độ low-latency, và resample `speex-float-1`. `vdesk-audio` chỉnh sink về 44100 Hz, `pm=0`, buffer 120 ms. `pactl list sink-inputs` phải thấy `Resample method: copy`. |
 
@@ -165,7 +176,7 @@ Nếu lệnh lỗi, xem `vdesk status`, `systemctl status vdesk-browser` và `cu
 sudo ./uninstall.sh
 ```
 
-Script dừng, disable và xoá unit, lệnh `vdesk`, `/etc/vdesk` và `/var/lib/vdesk`. Không xoá profile Chromium, file mật khẩu VNC, gói apt, hay `playwright-cli`.
+Script dừng, disable và xoá unit, lệnh `vdesk`, launcher, `/etc/vdesk`, `/var/lib/vdesk`, symlink `patchright-cli` và `/usr/local/lib/vdesk-patchright`. Không xoá profile Chromium, file mật khẩu VNC, gói apt (kể cả Debian `chromium`), `uv`, `/etc/hosts`, hay skill `~/.agents/skills/patchright-cli`.
 
 ## Bảo mật
 
@@ -178,7 +189,7 @@ Script dừng, disable và xoá unit, lệnh `vdesk`, `/etc/vdesk` và `/var/lib
 
 ## English summary
 
-Boot starts Chromium headless with CDP on `127.0.0.1:9222` and the same `--user-data-dir` used later for the headed browser. `vdesk mode gui` starts Xvfb and `xfwm4`, then relaunches Chromium headed. `vdesk view on` starts x11vnc on `127.0.0.1:5900` and noVNC/websockify on `127.0.0.1:6080`, switching to gui first if needed. `vdesk view off` stops only those two processes and does not restart Chromium. After a mode change, attach again with `playwright-cli attach --cdp=http://127.0.0.1:9222`.
+Boot starts Debian Chromium on the ozone headless platform, without `--headless=new`, with CDP on `127.0.0.1:9222` and the same `--user-data-dir` used later for the headed browser. The launcher sets `TZ=Asia/Ho_Chi_Minh`, `--lang=vi-VN`, and a fixed screen size. `vdesk mode gui` starts Xvfb and `xfwm4`, then relaunches Chromium headed. `vdesk view on` starts x11vnc on `127.0.0.1:5900` and noVNC/websockify on `127.0.0.1:6080`, switching to gui first if needed. `vdesk view off` stops only those two processes and does not restart Chromium. After a mode change, attach again with `patchright-cli attach --cdp=http://127.0.0.1:9222 --context=host`. Do not run `patchright-cli open` or `playwright-cli`.
 
 An idle timer returns to headless after 10 minutes with no VNC client and no CDP client. View alone turns off after 10 minutes with no VNC client.
 
