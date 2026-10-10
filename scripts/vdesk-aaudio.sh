@@ -11,6 +11,8 @@ while [ ! -S "${sock}" ] && [ "$i" -lt 40 ]; do
   i=$((i + 1))
 done
 if [ ! -S "${sock}" ]; then
+  rm -f /etc/pulse/client.conf.d/vdesk.conf
+  echo "Pulse socket missing; removed client config and skipped AAudio" >&2
   exit 0
 fi
 if ! command -v pactl >/dev/null 2>&1; then
@@ -19,19 +21,27 @@ if ! command -v pactl >/dev/null 2>&1; then
 fi
 
 export PULSE_SERVER="unix:${sock}"
-if ! pactl list modules short | grep -q 'module-aaudio-sink'; then
+modules=$(timeout 5 pactl list modules short) || {
+  echo "pactl list modules timed out or failed" >&2
+  exit 1
+}
+if ! printf '%s\n' "${modules}" | grep -q module-aaudio-sink; then
   exit 0
 fi
 
-spec=$(pactl list sinks | awk '/Sample Specification:/{print $3,$4,$5; exit}')
-conf=$(pactl list sinks | sed -n 's/.*configured //p' | head -1)
+sinks=$(timeout 5 pactl list sinks) || {
+  echo "pactl list sinks timed out or failed" >&2
+  exit 1
+}
+spec=$(printf '%s\n' "${sinks}" | awk '/Sample Specification:/{print $3,$4,$5; exit}')
+conf=$(printf '%s\n' "${sinks}" | sed -n 's/.*configured //p' | head -1)
 if [ "${spec}" = "s16le 2ch 44100Hz" ] && [ "${conf}" = "120000 usec" ]; then
   exit 0
 fi
 
-pactl unload-module module-aaudio-sink
-if ! pactl load-module module-aaudio-sink rate=44100 latency=120 pm=0 sink_name=AAudio_sink; then
+timeout 5 pactl unload-module module-aaudio-sink
+if ! timeout 5 pactl load-module module-aaudio-sink rate=44100 latency=120 pm=0 sink_name=AAudio_sink; then
   echo "failed to retune AAudio; restoring the default sink" >&2
-  pactl load-module module-aaudio-sink sink_name=AAudio_sink || true
+  timeout 5 pactl load-module module-aaudio-sink sink_name=AAudio_sink || true
   exit 1
 fi

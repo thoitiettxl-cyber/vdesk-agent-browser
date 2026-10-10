@@ -336,22 +336,19 @@ configure_pulse() {
     die "unsupported PULSE_SERVER: ${server}"
   fi
 
-  # Chromium clears its environment after start, so the unit Environment= line
+  # Chromium clears its environment after start, so a unit Environment= line
   # is not enough. libpulse still reads this file. Shared memory is unusable
   # when the server socket is bind-mounted from another mount namespace.
+  # Do not also set PULSE_SERVER on the browser unit; Droidspaces already
+  # exports it, and this file is the one Chromium still honors.
   install -d -m 755 /etc/pulse/client.conf.d
   cat > /etc/pulse/client.conf.d/vdesk.conf <<EOF
 default-server = ${server}
 enable-shm = no
 EOF
   chmod 644 /etc/pulse/client.conf.d/vdesk.conf
-
-  install -d -m 755 /etc/systemd/system/vdesk-browser.service.d
-  cat > /etc/systemd/system/vdesk-browser.service.d/pulse.conf <<EOF
-[Service]
-Environment=PULSE_SERVER=${server}
-EOF
-  chmod 644 /etc/systemd/system/vdesk-browser.service.d/pulse.conf
+  rm -f /etc/systemd/system/vdesk-browser.service.d/pulse.conf
+  rmdir /etc/systemd/system/vdesk-browser.service.d 2>/dev/null || true
   printf 'PulseAudio client set to %s\n' "${server}"
 }
 

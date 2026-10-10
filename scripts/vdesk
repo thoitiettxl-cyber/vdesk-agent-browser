@@ -460,8 +460,18 @@ cmd_idle() {
   fi
 }
 
+reconcile_pulse() {
+  if [[ -S /tmp/.pulse-socket ]]; then
+    return 0
+  fi
+  rm -f /etc/pulse/client.conf.d/vdesk.conf
+  systemctl stop vdesk-audio.service >/dev/null 2>&1 || true
+  printf 'vdesk: Pulse socket missing; removed client config and stopped vdesk-audio\n'
+}
+
 cmd_boot() {
   local mode view
+  reconcile_pulse
   mode=$(read_state mode headless)
   view=$(read_state view off)
   if [[ ${mode} == gui ]]; then

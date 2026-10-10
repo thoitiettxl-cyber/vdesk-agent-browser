@@ -52,14 +52,9 @@ RAM flags include `--disable-extensions`, `--disable-background-networking`, `--
 
 ## PulseAudio
 
-`install.sh` does not change audio unless `/tmp/.pulse-socket` exists or `/etc/profile.d/droidspaces_env.sh` exports `PULSE_SERVER`. In that case it writes:
+`install.sh` does not change audio unless `/tmp/.pulse-socket` exists or `/etc/profile.d/droidspaces_env.sh` exports `PULSE_SERVER`. In that case it writes `/etc/pulse/client.conf.d/vdesk.conf` with `default-server` and `enable-shm = no`. It does not set `PULSE_SERVER` again on `vdesk-browser`. Droidspaces already exports that variable, and Chromium clears its environment after startup, so the client file is what libpulse still reads. Shared memory must stay off because the socket is bind-mounted from another mount namespace.
 
-- `/etc/pulse/client.conf.d/vdesk.conf` with `default-server` and `enable-shm = no`
-- `/etc/systemd/system/vdesk-browser.service.d/pulse.conf`
-
-The client file is the one Chromium uses. The browser clears its environment after startup, so a systemd `Environment=` line alone does not reach the audio process. Shared memory must stay off because the socket is bind-mounted from another mount namespace. Mode switches keep this configuration.
-
-On that same host, `vdesk-audio.service` reloads `module-aaudio-sink` at 44100 Hz with `pm=0` and a 120 ms buffer. The default sink is 48000 Hz in low-latency mode, and PulseAudio then resamples Chromium's 44100 Hz stream with `speex-float-1`. After the retune, `pactl list sink-inputs` should show `Resample method: copy`.
+On boot, if `/tmp/.pulse-socket` is gone, `vdesk boot` removes that client file and stops `vdesk-audio`. The audio script does the same if the socket never appears, and every `pactl` call has a 5 second timeout. When the socket is present, `vdesk-audio.service` reloads `module-aaudio-sink` at 44100 Hz with `pm=0` and a 120 ms buffer. The default sink is 48000 Hz in low-latency mode, and PulseAudio then resamples Chromium's 44100 Hz stream with `speex-float-1`. After the retune, `pactl list sink-inputs` should show `Resample method: copy`.
 
 ## VNC
 
