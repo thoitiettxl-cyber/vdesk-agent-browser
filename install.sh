@@ -104,6 +104,7 @@ install_packages() {
     ffmpeg \
     dbus-x11 \
     chromium \
+    vulkan-tools \
     libpulse0 \
     curl \
     iproute2

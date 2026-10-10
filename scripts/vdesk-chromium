@@ -17,6 +17,27 @@ source "${CONFIG}"
 : "${VDESK_WIDTH:?}"
 : "${VDESK_HEIGHT:?}"
 
+turnip_ready() {
+  local config=/run/droidspaces/container.config
+  local gpu_mode bin out
+  [[ -f ${config} ]] || return 1
+  gpu_mode=$(awk -F= '$1 == "enable_gpu_mode" { print $2; exit }' "${config}")
+  [[ ${gpu_mode} == 1 ]] || return 1
+  [[ -c /dev/kgsl-3d0 ]] || return 1
+  for bin in vulkaninfo eglinfo; do
+    command -v "${bin}" >/dev/null 2>&1 || continue
+    if [[ ${bin} == vulkaninfo ]]; then
+      out=$(timeout 8 env MESA_LOADER_DRIVER_OVERRIDE=kgsl TU_DEBUG=noconform vulkaninfo --summary 2>&1) || true
+    else
+      out=$(timeout 8 env MESA_LOADER_DRIVER_OVERRIDE=kgsl TU_DEBUG=noconform eglinfo -B 2>&1) || true
+    fi
+    if printf '%s\n' "${out}" | grep -qi turnip; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 mode=headless
 if [[ -f ${STATE} ]]; then
   mode=$(tr -d '[:space:]' < "${STATE}")
@@ -102,17 +123,24 @@ if [[ ${mode} == gui ]]; then
     fi
     sleep 0.25
   done
-  # kgsl selects the Freedreno driver for /dev/kgsl-3d0. TU_DEBUG=noconform
-  # lets Turnip advertise a usable Vulkan device. Set both before exec:
-  # Chromium clears unknown variables after startup, and the zygote does not
-  # pass them to the GPU process. The Vulkan ICD still binds Adreno without
-  # those variables in the GPU process. Do not add SwiftShader.
-  # --use-gl=egl is rejected (allowed pair is gl=egl-angle,angle=default).
-  # --use-angle=gl initializes GLX; with kgsl that kills the Xvfb connection.
-  # --use-angle=vulkan uses Turnip and reports Adreno in WebGL.
-  export MESA_LOADER_DRIVER_OVERRIDE=kgsl
-  export TU_DEBUG=noconform
-  args+=(--ozone-platform=x11 --window-position=0,0 --use-angle=vulkan)
+  # VirGL injects GALLIUM_DRIVER=virpipe. It must not reach this process.
+  unset GALLIUM_DRIVER || true
+  if turnip_ready; then
+    # kgsl selects Freedreno for /dev/kgsl-3d0. TU_DEBUG=noconform lets Turnip
+    # advertise a usable Vulkan device. Set both before exec: Chromium clears
+    # unknown variables after startup, and the zygote does not pass them to
+    # the GPU process. The Vulkan ICD still binds Adreno without those
+    # variables in the GPU process.
+    # --use-gl=egl is rejected. --use-angle=gl initializes GLX and drops Xvfb.
+    export MESA_LOADER_DRIVER_OVERRIDE=kgsl
+    export TU_DEBUG=noconform
+    args+=(--ozone-platform=x11 --window-position=0,0 --use-angle=vulkan)
+    printf 'vdesk-chromium: gui renderer=turnip\n' >&2
+  else
+    unset MESA_LOADER_DRIVER_OVERRIDE TU_DEBUG || true
+    args+=(--ozone-platform=x11 --window-position=0,0 --use-angle=swiftshader --enable-unsafe-swiftshader)
+    printf 'vdesk-chromium: gui renderer=swiftshader\n' >&2
+  fi
 else
   unset DISPLAY || true
   # Ozone headless without --headless=new: screenshots still work, but the UA
