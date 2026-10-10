@@ -1,0 +1,15 @@
+# Applies the saved mode before Chromium starts. Display units are not enabled.
+
+[Unit]
+Description=Apply saved vdesk mode before Chromium
+DefaultDependencies=no
+After=local-fs.target
+Before=vdesk-browser.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/vdesk boot
+
+[Install]
+WantedBy=multi-user.target

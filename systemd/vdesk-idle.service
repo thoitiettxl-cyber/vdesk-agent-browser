@@ -1,0 +1,9 @@
+# Turns VNC off, then returns to headless, after VDESK_IDLE_SEC with no viewer.
+# Turning view off does not restart Chromium. The headless switch does.
+
+[Unit]
+Description=Drop unused vdesk GUI and VNC
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/vdesk idle

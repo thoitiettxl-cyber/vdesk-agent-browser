@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# Launch the shared Chromium profile in the mode recorded by `vdesk`.
+# CDP stays on 127.0.0.1:9222. --no-sandbox is added only when install.sh
+# recorded a root service user. Do not point this process at another profile.
+set -euo pipefail
+
+CONFIG=/etc/vdesk/config
+STATE=/var/lib/vdesk/mode
+EXTRA=/etc/vdesk/chromium-extra
+
+# shellcheck disable=SC1090
+source "${CONFIG}"
+
+: "${VDESK_HOME:?}"
+: "${VDESK_WIDTH:?}"
+: "${VDESK_HEIGHT:?}"
+
+mode=headless
+if [[ -f ${STATE} ]]; then
+  mode=$(tr -d '[:space:]' < "${STATE}")
+fi
+if [[ ${mode} != gui ]]; then
+  mode=headless
+fi
+
+limit=${VDESK_RENDERER_LIMIT:-2}
+if [[ ! ${limit} =~ ^[1-9][0-9]*$ ]]; then
+  limit=2
+fi
+
+bin=/usr/lib/chromium/chromium
+if [[ ! -x ${bin} ]]; then
+  bin=/usr/bin/chromium
+fi
+
+ # Call the real binary. /usr/bin/chromium prepends --load-extension from
+ # /etc/chromium.d, which would undo --disable-extensions. Headless adds
+ # --disable-gpu --disable-software-rasterizer; that pair used less RAM than
+ # --use-angle=swiftshader --enable-unsafe-swiftshader and still screenshots.
+args=(
+  --no-first-run
+  --no-default-browser-check
+  --user-data-dir="${VDESK_HOME}/.chromium-profile"
+  --window-size="${VDESK_WIDTH},${VDESK_HEIGHT}"
+  --remote-debugging-port=9222
+  --remote-debugging-address=127.0.0.1
+  --disable-extensions
+  --disable-component-extensions-with-background-pages
+  --disable-default-apps
+  --disable-sync
+  --disable-background-networking
+  --disable-component-update
+  --disable-domain-reliability
+  --disable-breakpad
+  --disable-client-side-phishing-detection
+  --no-pings
+  --metrics-recording-only
+  "--disable-features=Translate,MediaRouter,OptimizationHints,InterestFeedContentSuggestions,BackForwardCache"
+  --renderer-process-limit="${limit}"
+  --process-per-site
+  --disk-cache-size=33554432
+  --media-cache-size=33554432
+  --aggressive-cache-discard
+)
+
+if [[ ${VDESK_NO_SANDBOX:-0} == 1 ]]; then
+  args+=(--no-sandbox)
+fi
+
+if [[ -f ${EXTRA} ]]; then
+  while IFS= read -r line || [[ -n ${line} ]]; do
+    case ${line} in
+      ''|\#*) continue ;;
+    esac
+    case ${line} in
+      -*) args+=("${line}") ;;
+      *) printf 'vdesk-chromium: ignoring extra flag %s\n' "${line}" >&2 ;;
+    esac
+  done < "${EXTRA}"
+fi
+
+mkdir -p "${VDESK_HOME}/.chromium-profile"
+
+if [[ ${mode} == gui ]]; then
+  export DISPLAY=:1
+  waited=0
+  while [[ ! -S /tmp/.X11-unix/X1 ]]; do
+    waited=$((waited + 1))
+    if [[ ${waited} -gt 40 ]]; then
+      printf 'vdesk-chromium: X socket /tmp/.X11-unix/X1 did not appear\n' >&2
+      exit 1
+    fi
+    sleep 0.25
+  done
+  args+=(--ozone-platform=x11)
+else
+  unset DISPLAY || true
+  # Least-RAM headless pair that still screenshots: measured lower than
+  # --use-angle=swiftshader --enable-unsafe-swiftshader on this host.
+  args+=(--headless=new --ozone-platform=headless --disable-gpu --disable-software-rasterizer)
+fi
+
+exec /usr/bin/dbus-run-session -- "${bin}" "${args[@]}"

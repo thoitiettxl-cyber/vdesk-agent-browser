@@ -1,13 +1,30 @@
 # systemd units
 
-These files are templates. `install.sh` copies them to `/etc/systemd/system/` and replaces:
+`install.sh` copies these files to `/etc/systemd/system/` and replaces the placeholders below. It also writes `/etc/vdesk/config` and installs `/usr/local/bin/vdesk`.
+
+Boot enables only `vdesk-apply`, `vdesk-browser`, and `vdesk-idle.timer`. Xvfb, xfwm4, x11vnc, and websockify are installed but not enabled. `vdesk mode gui` starts the display. `vdesk view on` starts VNC. Both leave the Chromium profile at `~user/.chromium-profile`.
 
 | Placeholder | Meaning |
 |---|---|
 | `@VDESK_USER@` | Account that runs Xvfb, the window manager, VNC, noVNC, and Chromium |
-| `@VDESK_HOME@` | Home directory of that account |
+| `@VDESK_HOME@` | Home directory of that account. Used for the VNC password path |
 | `@VDESK_GEOMETRY@` | `WIDTHxHEIGHT`, default `1920x1200` |
-| `@VDESK_WIDTH@` / `@VDESK_HEIGHT@` | Same size, split for Chromium `--window-size` |
+| `@VDESK_WIDTH@` / `@VDESK_HEIGHT@` | Written to `/etc/vdesk/config` for Chromium `--window-size` |
+
+`/etc/vdesk/config` also sets `VDESK_NO_SANDBOX` (1 only when the service user is root), `VDESK_RENDERER_LIMIT` (default 2), and `VDESK_IDLE_SEC` (default 600). Set `VDESK_IDLE_SEC=0` to disable the idle return to headless.
+
+`/etc/vdesk/chromium-extra` is optional, one Chromium flag per line. `install.sh` does not overwrite it. A previous local unit on this kind of host used `--lang=vi-VN` and `--disable-blink-features=AutomationControlled`; put those there if you still want them.
+
+## Modes
+
+| Command | What stays running |
+|---|---|
+| `vdesk mode headless` | Chromium `--headless=new` and CDP `127.0.0.1:9222`. This is the boot default. |
+| `vdesk mode gui` | Xvfb `:1`, `xfwm4`, headed Chromium, same profile and CDP port. |
+| `vdesk view on` | x11vnc on `127.0.0.1:5900` and websockify on `127.0.0.1:6080`. Starts gui first if needed. |
+| `vdesk view off` | Stops only x11vnc and websockify. Chromium keeps its PID. |
+
+`vdesk-idle.timer` runs `vdesk idle` every minute. With no VNC client for `VDESK_IDLE_SEC`, it turns view off and does not restart Chromium. With no VNC client and no CDP client for that long, it switches to headless, which does restart Chromium.
 
 ## Run as a normal user
 
@@ -17,7 +34,7 @@ Prefer a dedicated unprivileged account, for example `vdesk`. Create it before `
 sudo adduser --disabled-password --gecos "" vdesk
 ```
 
-Then run `sudo ./install.sh` and enter `vdesk` when asked. The script stores the VNC password in `~vdesk/.vnc/passwd` and the Chromium profile in `~vdesk/.chromium-profile`.
+Then run `sudo ./install.sh` and enter `vdesk` when asked. The script stores the VNC password in `~vdesk/.vnc/passwd` and the Chromium profile in `~vdesk/.chromium-profile`. It also installs a sudoers drop-in so that account can run `/usr/local/bin/vdesk` without a password.
 
 Do not add `--no-sandbox` for that account. Chromium's sandbox should stay on.
 
@@ -25,7 +42,13 @@ Do not add `--no-sandbox` for that account. Chromium's sandbox should stay on.
 
 ## Root
 
-If the service user is `root`, `install.sh` inserts `--no-sandbox` into `vdesk-browser.service`. That is required for Chromium to start, and it is less safe. Use root only on a disposable test machine.
+If the service user is `root`, `install.sh` sets `VDESK_NO_SANDBOX=1`. The launcher adds `--no-sandbox`. That is required for Chromium to start, and it is less safe. Use root only on a disposable test machine.
+
+## Chromium flags
+
+The launcher is `/usr/local/libexec/vdesk-chromium`. It execs `/usr/lib/chromium/chromium`, not `/usr/bin/chromium`, so Debian's `/etc/chromium.d` flags do not turn GPU rasterization and extension loading back on.
+
+RAM flags include `--disable-extensions`, `--disable-background-networking`, `--disable-component-update`, `--disable-sync`, and `--renderer-process-limit`. Headless adds `--headless=new --disable-gpu --disable-software-rasterizer`. That pair used less RAM than `--use-angle=swiftshader --enable-unsafe-swiftshader` and still produced a readable screenshot. GUI uses `--ozone-platform=x11` and `DISPLAY=:1`. Installed extensions such as uBlock Origin Lite stay in the profile and are not loaded.
 
 ## PulseAudio
 
@@ -34,13 +57,13 @@ If the service user is `root`, `install.sh` inserts `--no-sandbox` into `vdesk-b
 - `/etc/pulse/client.conf.d/vdesk.conf` with `default-server` and `enable-shm = no`
 - `/etc/systemd/system/vdesk-browser.service.d/pulse.conf`
 
-The client file is the one Chromium uses. The browser clears its environment after startup, so a systemd `Environment=` line alone does not reach the audio process. Shared memory must stay off because the socket is bind-mounted from another mount namespace.
+The client file is the one Chromium uses. The browser clears its environment after startup, so a systemd `Environment=` line alone does not reach the audio process. Shared memory must stay off because the socket is bind-mounted from another mount namespace. Mode switches keep this configuration.
 
 On that same host, `vdesk-audio.service` reloads `module-aaudio-sink` at 44100 Hz with `pm=0` and a 120 ms buffer. The default sink is 48000 Hz in low-latency mode, and PulseAudio then resamples Chromium's 44100 Hz stream with `speex-float-1`. After the retune, `pactl list sink-inputs` should show `Resample method: copy`.
 
 ## VNC
 
-`vdesk-vnc.service` listens with `-listen localhost -no6`. That binds `127.0.0.1:5900`. It does not listen on the Wi-Fi address.
+`vdesk-vnc.service` listens with `-localhost -no6 -noipv6`. That binds `127.0.0.1:5900` only. `-listen 127.0.0.1` still opened `[::]:5900` on port 5900, so the unit does not use `-listen`.
 
 `vdesk-novnc.service` proxies to `127.0.0.1:5900`, not the hostname `localhost`. On a host with IPv6 disabled, that hostname can still resolve to `::1` and the connection fails.
 

@@ -1,20 +1,19 @@
-# Template. install.sh replaces @VDESK_USER@, @VDESK_HOME@, @VDESK_WIDTH@, @VDESK_HEIGHT@.
-# Do not add --no-sandbox unless the service user is root. install.sh adds it only then.
+# Template. install.sh replaces @VDESK_USER@.
+# Flags, profile, and headless/gui mode come from /usr/local/libexec/vdesk-chromium.
+# Do not add --no-sandbox here. install.sh sets VDESK_NO_SANDBOX=1 only for root.
 # CDP stays on 127.0.0.1:9222. Do not publish that port.
 
 [Unit]
-Description=Chromium on :1
-Requires=vdesk-xvfb.service
-After=vdesk-wm.service
-PartOf=vdesk-xvfb.service
+Description=Chromium CDP on 127.0.0.1:9222
+After=vdesk-apply.service
+Wants=vdesk-apply.service
 
 [Service]
 User=@VDESK_USER@
-Environment=DISPLAY=:1
-ExecStartPre=/bin/sh -c 'until [ -S /tmp/.X11-unix/X1 ]; do sleep 0.5; done'
-ExecStart=/usr/bin/dbus-run-session -- /usr/bin/chromium --no-first-run --no-default-browser-check --user-data-dir=@VDESK_HOME@/.chromium-profile --window-size=@VDESK_WIDTH@,@VDESK_HEIGHT@ --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1
+ExecStart=/usr/local/libexec/vdesk-chromium
 Restart=always
 RestartSec=5
+TimeoutStopSec=20
 
 [Install]
 WantedBy=multi-user.target

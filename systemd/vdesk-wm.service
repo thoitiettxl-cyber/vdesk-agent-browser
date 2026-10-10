@@ -1,5 +1,5 @@
 # Template. install.sh replaces @VDESK_USER@.
-# Prefer a normal user. See systemd/README.md.
+# Not enabled at boot. `vdesk mode gui` starts it.
 
 [Unit]
 Description=xfwm4 on :1
@@ -14,6 +14,3 @@ ExecStartPre=/bin/sh -c 'until [ -S /tmp/.X11-unix/X1 ]; do sleep 0.5; done'
 ExecStart=/usr/bin/dbus-launch --exit-with-session /usr/bin/xfwm4 --compositor=off
 Restart=always
 RestartSec=2
-
-[Install]
-WantedBy=multi-user.target

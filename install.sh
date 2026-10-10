@@ -1,14 +1,27 @@
 #!/usr/bin/env bash
 # Install the virtual display, localhost VNC/noVNC, and Chromium CDP stack.
+# Boot starts Chromium headless only. GUI and VNC stay stopped until `vdesk`.
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-UNIT_NAMES=(
+ENABLED_UNITS=(
+  vdesk-apply
+  vdesk-browser
+)
+DISPLAY_UNITS=(
   vdesk-xvfb
   vdesk-wm
   vdesk-vnc
   vdesk-novnc
+)
+RENDER_UNITS=(
+  vdesk-apply
   vdesk-browser
+  vdesk-idle
+  vdesk-xvfb
+  vdesk-wm
+  vdesk-vnc
+  vdesk-novnc
 )
 
 die() {
@@ -96,6 +109,9 @@ install_packages() {
     npm \
     curl \
     iproute2
+  if [[ ! -x /usr/lib/chromium/chromium && ! -x /usr/bin/chromium ]]; then
+    die "chromium binary not found"
+  fi
 }
 
 render_unit() {
@@ -119,12 +135,71 @@ render_unit() {
   chmod 644 "${dst}"
 }
 
-add_root_sandbox_flag() {
-  local dst=/etc/systemd/system/vdesk-browser.service
-  if grep -q -- '--no-sandbox' "${dst}"; then
+write_config() {
+  local user=$1
+  local home=$2
+  local geometry=$3
+  local width=$4
+  local height=$5
+  local sandbox=0
+
+  if [[ ${user} == root ]]; then
+    sandbox=1
+  fi
+  install -d -m 755 /etc/vdesk /var/lib/vdesk
+  cat > /etc/vdesk/config <<EOF
+VDESK_USER=${user}
+VDESK_HOME=${home}
+VDESK_GEOMETRY=${geometry}
+VDESK_WIDTH=${width}
+VDESK_HEIGHT=${height}
+VDESK_NO_SANDBOX=${sandbox}
+VDESK_RENDERER_LIMIT=2
+VDESK_IDLE_SEC=600
+EOF
+  chmod 644 /etc/vdesk/config
+  if [[ ! -f /etc/vdesk/chromium-extra ]]; then
+    cat > /etc/vdesk/chromium-extra <<'EOF'
+# Optional extra Chromium flags, one per line. Lines starting with # are ignored.
+# Do not put secrets here. install.sh does not overwrite this file.
+# --lang=vi-VN
+# --disable-blink-features=AutomationControlled
+EOF
+    chmod 644 /etc/vdesk/chromium-extra
+  fi
+  printf 'headless\n' > /var/lib/vdesk/mode
+  printf 'off\n' > /var/lib/vdesk/view
+  chmod 644 /var/lib/vdesk/mode /var/lib/vdesk/view
+}
+
+install_commands() {
+  install -d -m 755 /usr/local/bin /usr/local/libexec
+  install -m 755 "${SCRIPT_DIR}/scripts/vdesk" /usr/local/bin/vdesk
+  install -m 755 "${SCRIPT_DIR}/scripts/vdesk-chromium" /usr/local/libexec/vdesk-chromium
+}
+
+install_sudoers() {
+  local service_user=$1
+  local skill_user=$2
+  local tmp
+  local wrote=0
+  tmp=$(mktemp)
+  printf '# vdesk mode switches. Installed by vdesk-agent-browser.\n' > "${tmp}"
+  if [[ ${service_user} != root ]]; then
+    printf '%s ALL=(root) NOPASSWD: /usr/local/bin/vdesk\n' "${service_user}" >> "${tmp}"
+    wrote=1
+  fi
+  if [[ ${skill_user} != root && ${skill_user} != "${service_user}" ]]; then
+    printf '%s ALL=(root) NOPASSWD: /usr/local/bin/vdesk\n' "${skill_user}" >> "${tmp}"
+    wrote=1
+  fi
+  if [[ ${wrote} -eq 0 ]]; then
+    rm -f "${tmp}" /etc/sudoers.d/vdesk
     return 0
   fi
-  sed -i 's|/usr/bin/chromium |/usr/bin/chromium --no-sandbox |' "${dst}"
+  visudo -cf "${tmp}" >/dev/null
+  install -m 440 "${tmp}" /etc/sudoers.d/vdesk
+  rm -f "${tmp}"
 }
 
 store_vnc_password() {
@@ -190,7 +265,7 @@ configure_aaudio() {
   install -d -m 755 /usr/local/sbin
   install -m 755 "${SCRIPT_DIR}/scripts/vdesk-aaudio.sh" /usr/local/sbin/vdesk-aaudio.sh
   install -m 644 "${SCRIPT_DIR}/systemd/vdesk-audio.service" /etc/systemd/system/vdesk-audio.service
-  UNIT_NAMES+=(vdesk-audio)
+  ENABLED_UNITS+=(vdesk-audio)
   printf 'AAudio sink will be tuned to 44100 Hz on boot\n'
 }
 
@@ -233,22 +308,47 @@ EOF
   printf 'PulseAudio client set to %s\n' "${server}"
 }
 
+stop_old_display() {
+  local name
+  if [[ ! -d /run/systemd/system ]]; then
+    return 0
+  fi
+  # Disable while the previous unit files still have [Install], so the
+  # multi-user.target.wants symlinks are removed. New display units are
+  # started only by `vdesk`.
+  systemctl disable --now "${DISPLAY_UNITS[@]}" || true
+  for name in "${DISPLAY_UNITS[@]}"; do
+    rm -f "/etc/systemd/system/multi-user.target.wants/${name}.service"
+  done
+}
+
 enable_units() {
   local name
   systemctl daemon-reload
-  systemctl enable --now "${UNIT_NAMES[@]}"
-  for name in "${UNIT_NAMES[@]}"; do
+  systemctl enable "${ENABLED_UNITS[@]}" vdesk-idle.timer
+  systemctl start vdesk-apply.service
+  /usr/local/bin/vdesk mode headless
+  systemctl restart vdesk-idle.timer
+  for name in "${ENABLED_UNITS[@]}" vdesk-idle.timer; do
     systemctl is-active --quiet "${name}" || die "${name} is not active"
+  done
+  for name in "${DISPLAY_UNITS[@]}"; do
+    if systemctl is-active --quiet "${name}"; then
+      die "${name} is active; headless boot should leave it stopped"
+    fi
   done
 }
 
 print_checks() {
   local ready=0
   local attempt
-  printf '\n== service status ==\n'
-  systemctl --no-pager --full status "${UNIT_NAMES[@]}" || true
+  printf '\n== vdesk status ==\n'
+  /usr/local/bin/vdesk status || true
   printf '\n== listeners ==\n'
-  ss -ltnp | grep -E '127\.0\.0\.1:(5900|6080|9222)' || true
+  ss -ltnp | grep -E ':(5900|6080|9222)' || true
+  if ss -ltn | awk '$4 ~ /:(5900|6080|9222)$/ && $4 !~ /^127\.0\.0\.1:/ { found = 1 } END { exit found ? 0 : 1 }'; then
+    die "a vdesk port is not bound to 127.0.0.1 only"
+  fi
   printf '\n== CDP ==\n'
   for attempt in 1 2 3 4 5 6 7 8 9 10; do
     if curl -fsS http://127.0.0.1:9222/json/version; then
@@ -265,7 +365,7 @@ print_checks() {
 }
 
 main() {
-  local service_user geometry width height home skill_user skill_home
+  local service_user geometry width height home skill_user skill_home name
 
   need_root
   need_systemd
@@ -290,13 +390,17 @@ main() {
 
   install_packages
   store_vnc_password "${service_user}" "${home}"
+  stop_old_display
 
-  local name
-  for name in "${UNIT_NAMES[@]}"; do
+  write_config "${service_user}" "${home}" "${geometry}" "${width}" "${height}"
+  install_commands
+  install_sudoers "${service_user}" "${skill_user}"
+
+  for name in "${RENDER_UNITS[@]}"; do
     render_unit "${name}" "${service_user}" "${home}" "${geometry}" "${width}" "${height}"
   done
+  install -m 644 "${SCRIPT_DIR}/systemd/vdesk-idle.timer" /etc/systemd/system/vdesk-idle.timer
   if [[ ${service_user} == "root" ]]; then
-    add_root_sandbox_flag
     printf 'warning: Chromium is running as root with --no-sandbox\n' >&2
   fi
 
@@ -309,7 +413,12 @@ main() {
 
   cat <<EOF
 
-Installed.
+Installed. Boot mode is headless: Chromium only, CDP on 127.0.0.1:9222.
+  vdesk mode gui       start Xvfb and xfwm4, relaunch Chromium headed
+  vdesk mode headless  stop the desktop and return to headless
+  vdesk view on|off    start or stop VNC without restarting Chromium
+  vdesk status
+After a mode change, run: playwright-cli attach --cdp=http://127.0.0.1:9222
 Append pi/AGENTS.md.example to ${skill_home}/.pi/agent/AGENTS.md before Pi uses the browser.
 Connect only through an SSH tunnel. Do not publish ports 5900, 6080, or 9222.
 EOF

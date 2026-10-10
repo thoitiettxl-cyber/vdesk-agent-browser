@@ -1,0 +1,472 @@
+#!/usr/bin/env bash
+# Switch the agent browser between headless, a real X desktop, and VNC view.
+# Profile and CDP port stay the same. View on/off does not restart Chromium
+# unless view on has to leave headless first (that restart is the mode change).
+set -euo pipefail
+
+CONFIG=/etc/vdesk/config
+STATE=/var/lib/vdesk
+LOCK=${STATE}/lock
+
+die() {
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
+
+usage() {
+  cat <<'EOF'
+usage: vdesk mode headless|gui
+       vdesk view on|off
+       vdesk status
+EOF
+}
+
+if [[ ${EUID} -ne 0 ]]; then
+  exec sudo -n -- /usr/local/bin/vdesk "$@"
+fi
+
+# shellcheck disable=SC1090
+[[ -f ${CONFIG} ]] || die "missing ${CONFIG}; run install.sh"
+# shellcheck disable=SC1090
+source "${CONFIG}"
+
+: "${VDESK_HOME:?}"
+if [[ ! ${VDESK_IDLE_SEC:-600} =~ ^[0-9]+$ ]]; then
+  VDESK_IDLE_SEC=600
+fi
+
+mkdir -p "${STATE}"
+chmod 755 "${STATE}"
+
+read_state() {
+  local name=$1
+  local fallback=$2
+  local value=""
+  if [[ -f ${STATE}/${name} ]]; then
+    value=$(tr -d '[:space:]' < "${STATE}/${name}")
+  fi
+  if [[ -z ${value} ]]; then
+    value=${fallback}
+  fi
+  printf '%s\n' "${value}"
+}
+
+write_state() {
+  local name=$1
+  local value=$2
+  printf '%s\n' "${value}" > "${STATE}/${name}.tmp"
+  mv "${STATE}/${name}.tmp" "${STATE}/${name}"
+}
+
+stamp_activity() {
+  local now
+  now=$(date +%s)
+  write_state last-viewer "${now}"
+  write_state last-cdp "${now}"
+}
+
+with_lock() {
+  mkdir -p "${STATE}"
+  exec 9>"${LOCK}"
+  flock 9
+}
+
+unit_active() {
+  systemctl is-active --quiet "$1"
+}
+
+chromium_pid() {
+  local pid cmd
+  for pid in $(pgrep -x chromium || true); do
+    [[ -r /proc/${pid}/cmdline ]] || continue
+    cmd=$(tr '\0' ' ' < "/proc/${pid}/cmdline" || true)
+    case ${cmd} in
+      *' --type='*) ;;
+      /usr/lib/chromium/chromium\ *|/usr/bin/chromium\ *)
+        printf '%s\n' "${pid}"
+        return 0
+        ;;
+    esac
+  done
+  return 0
+}
+
+browser_is_headless() {
+  local pid cmd
+  pid=$(chromium_pid || true)
+  [[ -n ${pid} ]] || return 1
+  cmd=$(tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null || true)
+  [[ ${cmd} == *--headless* ]]
+}
+
+browser_is_headed() {
+  local pid cmd
+  unit_active vdesk-browser.service || return 1
+  pid=$(chromium_pid || true)
+  [[ -n ${pid} ]] || return 1
+  cmd=$(tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null || true)
+  [[ ${cmd} != *--headless* && ${cmd} == *--ozone-platform=x11* ]]
+}
+
+wait_x() {
+  local _
+  for _ in $(seq 1 50); do
+    if [[ -S /tmp/.X11-unix/X1 ]]; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  return 1
+}
+
+wait_cdp() {
+  local _
+  for _ in $(seq 1 40); do
+    if curl -fsS --max-time 1 http://127.0.0.1:9222/json/version >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.5
+  done
+  return 1
+}
+
+port_established() {
+  local port=$1
+  ss -Htn state established "sport = :${port}" 2>/dev/null | awk 'NF { c++ } END { print c + 0 }'
+}
+
+listen_addrs() {
+  local port=$1
+  ss -Hltn "sport = :${port}" 2>/dev/null | awk '{ print $4 }'
+}
+
+assert_loopback_port() {
+  local port=$1
+  local addrs addr count
+  addrs=$(listen_addrs "${port}")
+  count=0
+  [[ -n ${addrs} ]] || return 1
+  while IFS= read -r addr; do
+    [[ -z ${addr} ]] && continue
+    count=$((count + 1))
+    if [[ ${addr} != "127.0.0.1:${port}" ]]; then
+      printf 'vdesk: port %s is bound to %s, expected 127.0.0.1:%s only\n' "${port}" "${addr}" "${port}" >&2
+      return 1
+    fi
+  done <<< "${addrs}"
+  [[ ${count} -gt 0 ]]
+}
+
+start_display() {
+  systemctl --quiet start vdesk-xvfb.service
+  wait_x || die "Xvfb socket /tmp/.X11-unix/X1 did not appear"
+  systemctl --quiet start vdesk-wm.service
+}
+
+stop_display() {
+  systemctl --quiet stop vdesk-wm.service vdesk-xvfb.service
+}
+
+stop_view_units() {
+  systemctl --quiet stop vdesk-novnc.service vdesk-vnc.service
+  write_state view off
+}
+
+start_view_units() {
+  local _
+  systemctl --quiet start vdesk-vnc.service
+  systemctl --quiet start vdesk-novnc.service
+  for _ in $(seq 1 20); do
+    if assert_loopback_port 5900 && assert_loopback_port 6080; then
+      write_state view on
+      return 0
+    fi
+    sleep 0.25
+  done
+  systemctl --quiet stop vdesk-novnc.service vdesk-vnc.service || true
+  write_state view off
+  die "VNC did not bind 127.0.0.1:5900 and 127.0.0.1:6080"
+}
+
+flush_chromium() {
+  # Browser.close flushes the profile. A bare systemctl stop can drop cookies
+  # that are still only in memory. Bound the CDP call so it cannot hang.
+  timeout 8 python3 - << 'PY' || true
+import json, os, socket, base64, struct, urllib.request
+try:
+    version = json.load(urllib.request.urlopen("http://127.0.0.1:9222/json/version", timeout=2))
+except Exception:
+    raise SystemExit(0)
+url = version.get("webSocketDebuggerUrl") or ""
+if not url.startswith("ws://127.0.0.1:"):
+    raise SystemExit(0)
+host_path = url.split("://", 1)[1]
+host, path = host_path.split("/", 1)
+path = "/" + path
+host_name, port = host.split(":")
+key = base64.b64encode(os.urandom(16)).decode()
+sock = socket.create_connection((host_name, int(port)), timeout=2)
+sock.settimeout(2)
+sock.sendall((
+    f"GET {path} HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\n"
+    "Connection: Upgrade\r\n"
+    f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n"
+).encode())
+buf = b""
+while b"\r\n\r\n" not in buf:
+    chunk = sock.recv(4096)
+    if not chunk:
+        raise SystemExit(0)
+    buf += chunk
+payload = json.dumps({"id": 1, "method": "Browser.close"}).encode()
+mask = os.urandom(4)
+masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+header = bytes([0x81, 0x80 | len(payload)])
+sock.sendall(header + mask + masked)
+try:
+    sock.recv(1024)
+except Exception:
+    pass
+sock.close()
+PY
+  systemctl --quiet stop vdesk-browser.service || true
+}
+
+restart_browser() {
+  flush_chromium
+  systemctl --quiet start vdesk-browser.service
+  wait_cdp || die "Chromium CDP did not answer on 127.0.0.1:9222; check journalctl -u vdesk-browser"
+}
+
+ensure_gui() {
+  local restarted=no
+  local before after
+  before=$(chromium_pid || true)
+  write_state mode gui
+  stamp_activity
+  start_display
+  if browser_is_headed; then
+    systemctl --quiet start vdesk-browser.service
+  else
+    restart_browser
+    restarted=yes
+  fi
+  after=$(chromium_pid || true)
+  if [[ ${before} != "${after}" ]]; then
+    restarted=yes
+  fi
+  printf '%s\n' "${restarted}"
+}
+
+cmd_mode_headless() {
+  local before after restarted
+  before=$(chromium_pid || true)
+  if [[ $(read_state mode headless) == headless ]] && browser_is_headless && ! unit_active vdesk-xvfb.service; then
+    stop_view_units
+    stop_display
+    printf 'mode=headless\nview=off\nrestarted=no\nreattach=no\ncdp=http://127.0.0.1:9222\n'
+    return 0
+  fi
+  write_state mode headless
+  # Stop Chromium before X so a headed process is not restarted against a dead display.
+  flush_chromium
+  stop_view_units
+  stop_display
+  systemctl --quiet start vdesk-browser.service
+  wait_cdp || die "Chromium CDP did not answer on 127.0.0.1:9222; check journalctl -u vdesk-browser"
+  after=$(chromium_pid || true)
+  if [[ ${before} != "${after}" ]]; then
+    restarted=yes
+  else
+    restarted=no
+  fi
+  printf 'mode=headless\nview=off\nrestarted=%s\nreattach=%s\ncdp=http://127.0.0.1:9222\n' "${restarted}" "${restarted}"
+}
+
+cmd_mode_gui() {
+  local restarted
+  restarted=$(ensure_gui)
+  printf 'mode=gui\nview=%s\nrestarted=%s\nreattach=%s\ncdp=http://127.0.0.1:9222\n' "$(read_state view off)" "${restarted}" "${restarted}"
+}
+
+cmd_view_on() {
+  local restarted=no
+  if [[ $(read_state mode headless) != gui ]] || ! browser_is_headed; then
+    restarted=$(ensure_gui)
+  fi
+  start_view_units
+  stamp_activity
+  printf 'mode=gui\nview=on\nrestarted=%s\nreattach=%s\ncdp=http://127.0.0.1:9222\n' "${restarted}" "${restarted}"
+}
+
+cmd_view_off() {
+  local before after restarted
+  before=$(chromium_pid || true)
+  stop_view_units
+  after=$(chromium_pid || true)
+  if [[ ${before} != "${after}" ]]; then
+    restarted=yes
+  else
+    restarted=no
+  fi
+  printf 'mode=%s\nview=off\nrestarted=%s\nreattach=%s\nchromium_pid=%s\n' "$(read_state mode headless)" "${restarted}" "${restarted}" "${after}"
+}
+
+rss_of() {
+  local comm=$1
+  local value
+  value=$(ps -C "${comm}" -o rss= 2>/dev/null | awk '{ s += $1 } END { print s + 0 }' || true)
+  if [[ -z ${value} ]]; then
+    value=0
+  fi
+  printf '%s\n' "${value}"
+}
+
+cmd_status() {
+  local mode view cdp browser xvfb wm vnc novnc
+  local chromium_rss display_rss pid
+  mode=$(read_state mode headless)
+  view=$(read_state view off)
+  if curl -fsS --max-time 1 http://127.0.0.1:9222/json/version >/dev/null 2>&1; then
+    cdp=up
+  else
+    cdp=down
+  fi
+  unit_active vdesk-browser.service && browser=active || browser=inactive
+  unit_active vdesk-xvfb.service && xvfb=active || xvfb=inactive
+  unit_active vdesk-wm.service && wm=active || wm=inactive
+  unit_active vdesk-vnc.service && vnc=active || vnc=inactive
+  unit_active vdesk-novnc.service && novnc=active || novnc=inactive
+  chromium_rss=$(( $(rss_of chromium) + $(rss_of chrome_crashpad_handler) ))
+  display_rss=$(( $(rss_of Xvfb) + $(rss_of xfwm4) + $(rss_of x11vnc) + $(rss_of websockify) ))
+  pid=$(chromium_pid || true)
+  printf 'mode=%s\n' "${mode}"
+  printf 'view=%s\n' "${view}"
+  printf 'browser=%s\n' "${browser}"
+  printf 'xvfb=%s\n' "${xvfb}"
+  printf 'wm=%s\n' "${wm}"
+  printf 'vnc=%s\n' "${vnc}"
+  printf 'novnc=%s\n' "${novnc}"
+  printf 'cdp=%s\n' "${cdp}"
+  printf 'chromium_pid=%s\n' "${pid}"
+  printf 'chromium_rss_kb=%s\n' "${chromium_rss}"
+  printf 'display_rss_kb=%s\n' "${display_rss}"
+  printf 'idle_sec=%s\n' "${VDESK_IDLE_SEC}"
+  printf 'listeners='
+  ss -Hltn 2>/dev/null | awk '
+    $4 ~ /:(5900|6080|9222)$/ { printf "%s ", $4 }
+    END { printf "\n" }
+  '
+}
+
+stamp_age() {
+  local name=$1
+  local now value
+  now=$(date +%s)
+  if [[ ! -f ${STATE}/${name} ]]; then
+    write_state "${name}" "${now}"
+    printf '0\n'
+    return 0
+  fi
+  value=$(read_state "${name}" "${now}")
+  if [[ ! ${value} =~ ^[0-9]+$ ]]; then
+    write_state "${name}" "${now}"
+    printf '0\n'
+    return 0
+  fi
+  printf '%s\n' "$((now - value))"
+}
+
+cmd_idle() {
+  local viewers cdp_clients view_age cdp_age mode view
+  mode=$(read_state mode headless)
+  if [[ ${mode} == headless ]]; then
+    if unit_active vdesk-xvfb.service || unit_active vdesk-wm.service || unit_active vdesk-vnc.service || unit_active vdesk-novnc.service; then
+      printf 'vdesk: mode is headless, stopping display and VNC\n'
+      stop_view_units
+      stop_display
+    fi
+    return 0
+  fi
+  if [[ ${VDESK_IDLE_SEC} -eq 0 ]]; then
+    return 0
+  fi
+  if ! unit_active vdesk-browser.service; then
+    return 0
+  fi
+  viewers=$(( $(port_established 5900) + $(port_established 6080) ))
+  cdp_clients=$(port_established 9222)
+  if [[ ${viewers} -gt 0 ]]; then
+    write_state last-viewer "$(date +%s)"
+  fi
+  if [[ ${cdp_clients} -gt 0 ]]; then
+    write_state last-cdp "$(date +%s)"
+  fi
+  view_age=$(stamp_age last-viewer)
+  cdp_age=$(stamp_age last-cdp)
+  mode=$(read_state mode headless)
+  view=$(read_state view off)
+
+  if [[ ${mode} == gui && ${viewers} -eq 0 && ${cdp_clients} -eq 0 && ${view_age} -ge ${VDESK_IDLE_SEC} && ${cdp_age} -ge ${VDESK_IDLE_SEC} ]]; then
+    printf 'vdesk: no viewer and no CDP client for %ss, switching to headless\n' "${VDESK_IDLE_SEC}"
+    cmd_mode_headless
+    return 0
+  fi
+  if [[ ${view} == on && ${viewers} -eq 0 && ${view_age} -ge ${VDESK_IDLE_SEC} ]]; then
+    printf 'vdesk: no viewer for %ss, turning view off\n' "${VDESK_IDLE_SEC}"
+    cmd_view_off
+  fi
+}
+
+cmd_boot() {
+  local mode view
+  mode=$(read_state mode headless)
+  view=$(read_state view off)
+  if [[ ${mode} == gui ]]; then
+    start_display
+    if [[ ${view} == on ]]; then
+      start_view_units
+    fi
+    return 0
+  fi
+  systemctl --quiet stop vdesk-novnc.service vdesk-vnc.service vdesk-wm.service vdesk-xvfb.service || true
+}
+
+main() {
+  local cmd=${1:-}
+  case ${cmd} in
+    status)
+      cmd_status
+      ;;
+    mode|view|idle|boot)
+      with_lock
+      case ${cmd} in
+        mode)
+          case ${2:-} in
+            headless) cmd_mode_headless ;;
+            gui) cmd_mode_gui ;;
+            *) usage >&2; exit 2 ;;
+          esac
+          ;;
+        view)
+          case ${2:-} in
+            on) cmd_view_on ;;
+            off) cmd_view_off ;;
+            *) usage >&2; exit 2 ;;
+          esac
+          ;;
+        idle) cmd_idle ;;
+        boot) cmd_boot ;;
+      esac
+      ;;
+    -h|--help|help|'')
+      usage
+      ;;
+    *)
+      usage >&2
+      exit 2
+      ;;
+  esac
+}
+
+main "$@"

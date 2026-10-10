@@ -1,4 +1,5 @@
 # Template. install.sh replaces @VDESK_USER@.
+# Not enabled at boot. `vdesk view on` starts it.
 # websockify listens on 127.0.0.1 only. Reach it through an SSH tunnel.
 
 [Unit]
@@ -10,6 +11,3 @@ User=@VDESK_USER@
 ExecStart=/usr/bin/websockify --web=/usr/share/novnc --heartbeat=30 127.0.0.1:6080 127.0.0.1:5900
 Restart=always
 RestartSec=2
-
-[Install]
-WantedBy=multi-user.target
