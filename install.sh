@@ -105,8 +105,6 @@ install_packages() {
     dbus-x11 \
     chromium \
     libpulse0 \
-    nodejs \
-    npm \
     curl \
     iproute2
   if [[ ! -x /usr/lib/chromium/chromium && ! -x /usr/bin/chromium ]]; then
@@ -162,8 +160,9 @@ EOF
     cat > /etc/vdesk/chromium-extra <<'EOF'
 # Optional extra Chromium flags, one per line. Lines starting with # are ignored.
 # Do not put secrets here. install.sh does not overwrite this file.
-# --lang=vi-VN
-# --disable-blink-features=AutomationControlled
+# The launcher already sets --lang=vi-VN, Asia/Ho_Chi_Minh, and
+# --disable-blink-features=AutomationControlled. Do not add --enable-automation
+# or --headless here; vdesk-chromium refuses those.
 EOF
     chmod 644 /etc/vdesk/chromium-extra
   fi
@@ -221,16 +220,63 @@ store_vnc_password() {
   chmod 600 "${pass_file}"
 }
 
-install_playwright() {
+ensure_uv() {
+  if command -v uv >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ -x /root/.local/bin/uv ]]; then
+    export PATH="/root/.local/bin:${PATH}"
+    return 0
+  fi
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  export PATH="/root/.local/bin:${PATH}"
+  command -v uv >/dev/null 2>&1 || die "uv was not installed"
+}
+
+install_patchright() {
   local skill_user=$1
   local skill_home=$2
+  local py=/usr/bin/python3.13
+  local root=/usr/local/lib/vdesk-patchright
+  local skill_src=""
+  local skill_dst=${skill_home}/.agents/skills/patchright-cli
+  local group
 
-  npm install -g @playwright/cli@latest
-  command -v playwright-cli >/dev/null 2>&1 || die "playwright-cli was not installed onto PATH"
-  runuser -u "${skill_user}" -- env PATH="${PATH}" playwright-cli install --skills=agents -g
-  if [[ ! -f ${skill_home}/.agents/skills/playwright-cli/SKILL.md ]]; then
-    die "playwright-cli skill was not installed for ${skill_user}"
+  ensure_uv
+  if [[ ! -x ${py} ]]; then
+    py=$(uv python find 3.13)
   fi
+  uv venv "${root}" --python "${py}"
+  # Attach uses the Debian Chromium already started by vdesk. Do not run
+  # `patchright install chromium`; that downloads a second browser.
+  uv pip install --python "${root}/bin/python" 'patchright-cli==0.7.0'
+  ln -sfn "${root}/bin/patchright-cli" /usr/local/bin/patchright-cli
+  command -v patchright-cli >/dev/null 2>&1 || die "patchright-cli was not installed onto PATH"
+
+  if command -v npm >/dev/null 2>&1; then
+    npm uninstall -g @playwright/cli >/dev/null 2>&1 || true # patchright-cli replaces it
+  fi
+  rm -f /usr/local/bin/playwright-cli /usr/bin/playwright-cli # patchright-cli is the CLI on PATH
+
+  skill_src=$(find "${root}" -type d -path '*/patchright_cli/_skills/patchright-cli' -print -quit)
+  [[ -n ${skill_src} && -f ${skill_src}/SKILL.md ]] || die "patchright-cli skill files were not installed"
+  group=$(id -gn "${skill_user}")
+  rm -rf "${skill_home}/.agents/skills/playwright-cli" # skill dir is now patchright-cli
+  install -d -o "${skill_user}" -g "${group}" "${skill_home}/.agents/skills"
+  rm -rf "${skill_dst}"
+  cp -a "${skill_src}" "${skill_dst}"
+  if [[ -f ${SCRIPT_DIR}/pi/patchright-host.md ]]; then
+    python3 -c 'import pathlib,sys; skill,note=map(pathlib.Path, sys.argv[1:]); text=skill.read_text(); extra=note.read_text().rstrip()+"\n";
+end=text.find("\n---", 3) if text.startswith("---") else -1
+if end != -1:
+    end=text.find("\n", end+1)+1
+    text=text[:end]+"\n"+extra+text[end:]
+else:
+    text=extra+text
+skill.write_text(text)' "${skill_dst}/SKILL.md" "${SCRIPT_DIR}/pi/patchright-host.md"
+  fi
+  chown -R "${skill_user}:${group}" "${skill_dst}"
+  [[ -f ${skill_dst}/SKILL.md ]] || die "patchright-cli skill was not installed for ${skill_user}"
 }
 
 configure_localhost() {
@@ -408,7 +454,7 @@ main() {
   configure_localhost
   configure_pulse
   enable_units
-  install_playwright "${skill_user}" "${skill_home}"
+  install_patchright "${skill_user}" "${skill_home}"
   print_checks
 
   cat <<EOF
@@ -418,7 +464,7 @@ Installed. Boot mode is headless: Chromium only, CDP on 127.0.0.1:9222.
   vdesk mode headless  stop the desktop and return to headless
   vdesk view on|off    start or stop VNC without restarting Chromium
   vdesk status
-After a mode change, run: playwright-cli attach --cdp=http://127.0.0.1:9222
+After a mode change, run: patchright-cli attach --cdp=http://127.0.0.1:9222 --context=host
 Append pi/AGENTS.md.example to ${skill_home}/.pi/agent/AGENTS.md before Pi uses the browser.
 Connect only through an SSH tunnel. Do not publish ports 5900, 6080, or 9222.
 EOF

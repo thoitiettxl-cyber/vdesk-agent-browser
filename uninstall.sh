@@ -33,11 +33,13 @@ rm -f /etc/pulse/client.conf.d/vdesk.conf
 systemctl disable --now vdesk-audio.service || true
 rm -f /etc/systemd/system/vdesk-audio.service /usr/local/sbin/vdesk-aaudio.sh
 rm -f /usr/local/bin/vdesk /usr/local/libexec/vdesk-chromium /etc/sudoers.d/vdesk
-rm -rf /etc/vdesk /var/lib/vdesk
+rm -f /usr/local/bin/patchright-cli
+rm -rf /usr/local/lib/vdesk-patchright /etc/vdesk /var/lib/vdesk
 
 systemctl daemon-reload
 systemctl reset-failed "${UNIT_NAMES[@]}" || true
-printf 'removed vdesk systemd units and the vdesk command\n'
-printf 'left in place: VNC password file, Chromium profile, apt packages, playwright-cli\n'
-printf 'removed PulseAudio client drop-in if install.sh created one\n'
-printf 'left /etc/hosts unchanged\n'
+printf 'removed vdesk units, /usr/local/bin/vdesk, /usr/local/libexec/vdesk-chromium, and /etc/sudoers.d/vdesk\n'
+printf 'removed /usr/local/bin/patchright-cli and /usr/local/lib/vdesk-patchright\n'
+printf 'removed /etc/vdesk, /var/lib/vdesk, and the PulseAudio client drop-in if install.sh created one\n'
+printf 'left in place: Chromium profile, VNC password file, Debian chromium and other apt packages, uv, /etc/hosts\n'
+printf 'left ~/.agents/skills/patchright-cli in place; delete that directory to drop the skill\n'
