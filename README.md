@@ -55,9 +55,9 @@ Không có client VNC và không có client CDP trong 10 phút thì `vdesk-idle.
 
 Launcher là `/usr/local/libexec/vdesk-chromium`. Nó gọi `/usr/lib/chromium/chromium`, không gọi wrapper `/usr/bin/chromium`, vì wrapper thêm `--enable-gpu-rasterization` và `--load-extension`.
 
-Cờ giảm RAM: `--disable-extensions`, `--disable-component-extensions-with-background-pages`, `--disable-background-networking`, `--disable-component-update`, `--disable-sync`, `--renderer-process-limit` (mặc định 2), `--process-per-site`, cache đĩa 32MB. Headless thêm `--ozone-platform=headless --disable-gpu --disable-software-rasterizer` và `--ozone-override-screen-size` bằng độ phân giải đã cài. Không dùng `--headless=new`: trên Chromium Debian này cờ đó đổi UA thành `HeadlessChrome`. Không dùng SwiftShader. Extension đã cài, kể cả uBlock Origin Lite, vẫn nằm trong profile nhưng không được nạp.
+Cờ giảm RAM: `--disable-extensions`, `--disable-component-extensions-with-background-pages`, `--disable-background-networking`, `--disable-component-update`, `--disable-sync`, `--renderer-process-limit` (mặc định 2), `--process-per-site`, cache đĩa 32MB. Headless thêm `--ozone-platform=headless --disable-gpu --disable-software-rasterizer` và `--ozone-override-screen-size` bằng độ phân giải đã cài. Không dùng `--headless=new`: trên Chromium Debian này cờ đó đổi UA thành `HeadlessChrome`. Headless không dùng SwiftShader. Extension đã cài, kể cả uBlock Origin Lite, vẫn nằm trong profile nhưng không được nạp.
 
-Trên container Android có `/dev/kgsl-3d0`, GUI dùng Mesa kgsl/Turnip, không dùng llvmpipe. Gói Debian 25.0.7 không có Adreno 840. Giải `mesa-for-android-container_26.3.0-devel-20260824_debian_trixie_arm64.tar.gz` từ [mesa-for-android-container](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.3.0-devel-20260824) vào `/`, chạy `ldconfig`, rồi `apt-mark hold libegl-mesa0 libgbm1 libgl1-mesa-dri libglx-mesa0 mesa-libgallium mesa-vulkan-drivers`. Launcher GUI đặt `MESA_LOADER_DRIVER_OVERRIDE=kgsl` và `TU_DEBUG=noconform` trước `exec`, rồi thêm `--use-angle=vulkan`. Zygote không chuyển hai biến này sang tiến trình GPU; ICD Vulkan vẫn chọn Turnip. `--use-gl=egl` bị Chromium 154 từ chối vì chỉ cho `gl=egl-angle`. `--use-angle=gl` đi qua GLX; với `kgsl` thì kết nối Xvfb bị cắt. Xvfb không có DRI3, GLX vẫn là llvmpipe, nhưng WebGL qua Turnip vẫn báo `Adreno (TM) 840`. Không cần Termux:X11 cho đường này. Headless giữ `--disable-gpu`. Trên máy này, PSS Chromium GUI khi mở https://vnexpress.net/ là 663977 KB trước Mesa (llvmpipe) và 693431 KB sau Turnip, cùng cách đo cgroup `smaps_rollup` 12 giây sau CDP HTTP.
+Điều kiện Turnip và cách cài Mesa nằm ở mục GPU Adreno (tùy chọn). Khi probe đạt, GUI dùng Mesa kgsl/Turnip, không dùng llvmpipe. Gói Debian 25.0.7 không có Adreno 840. Giải `mesa-for-android-container_26.3.0-devel-20260824_debian_trixie_arm64.tar.gz` từ [mesa-for-android-container](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.3.0-devel-20260824) vào `/`, chạy `ldconfig`, rồi `apt-mark hold libegl-mesa0 libgbm1 libgl1-mesa-dri libglx-mesa0 mesa-libgallium mesa-vulkan-drivers`. Khi probe đạt, launcher GUI đặt `MESA_LOADER_DRIVER_OVERRIDE=kgsl` và `TU_DEBUG=noconform` trước `exec`, rồi thêm `--use-angle=vulkan`. Zygote không chuyển hai biến này sang tiến trình GPU; ICD Vulkan vẫn chọn Turnip. `--use-gl=egl` bị Chromium 154 từ chối vì chỉ cho `gl=egl-angle`. `--use-angle=gl` đi qua GLX; với `kgsl` thì kết nối Xvfb bị cắt. Xvfb không có DRI3, GLX vẫn là llvmpipe, nhưng WebGL qua Turnip vẫn báo `Adreno (TM) 840`. Không cần Termux:X11 cho đường này. Headless giữ `--disable-gpu`. Trên máy này, PSS Chromium GUI khi mở https://vnexpress.net/ là 663977 KB trước Mesa (llvmpipe) và 693431 KB sau Turnip, cùng cách đo cgroup `smaps_rollup` 12 giây sau CDP HTTP.
 
 Launcher cũng đặt `TZ=Asia/Ho_Chi_Minh`, `--lang=vi-VN`, `--accept-lang=vi-VN,vi,en-US,en` và `--disable-blink-features=AutomationControlled`. Unit `vdesk-browser` đặt cùng `TZ`. `--enable-automation` và `--headless` trong `/etc/vdesk/chromium-extra` bị từ chối. Độ phân giải cửa sổ và màn hình headless lấy từ `/etc/vdesk/config`, mặc định `1920x1200`.
 
@@ -170,6 +170,41 @@ Nếu lệnh lỗi, xem `vdesk status`, `systemctl status vdesk-browser` và `cu
 
 Đoạn cần có trong hướng dẫn của Pi nằm ở `pi/AGENTS.md.example`.
 
+## GPU Adreno (tùy chọn)
+
+vdesk không cài Mesa. GUI chỉ dùng Turnip khi Droidspaces bật GPU Access, có `/dev/kgsl-3d0`, và `vulkaninfo` hoặc `eglinfo` in `turnip`. Thiếu điều kiện nào thì launcher dùng SwiftShader. Headless vẫn tắt GPU.
+
+Bản trên máy này là `Mesa 26.3.0-devel (git-98f3d6229d)`, lấy từ tarball `mesa-for-android-container_26.3.0-devel-20260824_debian_trixie_arm64.tar.gz` của [mesa-for-android-container](https://github.com/lfdevs/mesa-for-android-container). File đã giải được liệt kê trong `/root/mesa-android.files`. Chúng đè lên gói Debian `25.0.7-2+deb13u1`, không phải gói deb riêng.
+
+Cài, chỉ trên arm64 khi container đã bật GPU Access và tắt VirGL:
+
+```bash
+sudo apt-mark hold libegl-mesa0 libgbm1 libgl1-mesa-dri libglx-mesa0 mesa-libgallium mesa-vulkan-drivers
+sudo tar -C / -xzf mesa-for-android-container_26.3.0-devel-20260824_debian_trixie_arm64.tar.gz
+sudo tar -tzf mesa-for-android-container_26.3.0-devel-20260824_debian_trixie_arm64.tar.gz > /root/mesa-android.files
+sudo ldconfig
+```
+
+Kiểm tra:
+
+```bash
+test -c /dev/kgsl-3d0
+awk -F= '$1=="enable_gpu_mode"{print}' /run/droidspaces/container.config
+timeout 8 env MESA_LOADER_DRIVER_OVERRIDE=kgsl TU_DEBUG=noconform vulkaninfo --summary | grep -i turnip
+```
+
+Dòng cần thấy gồm `driverName = turnip` hoặc `DRIVER_ID_MESA_TURNIP`. `apt-mark showhold` phải còn đúng sáu gói ở trên.
+
+Gỡ overlay bằng danh sách đã lưu, không gỡ bằng apt khi các file Turnip vẫn đang là bản muốn giữ:
+
+```bash
+while IFS= read -r rel; do
+  sudo rm -f "/${rel#./}"
+done < /root/mesa-android.files
+```
+
+Không chạy `apt-get install --reinstall` cho sáu gói đang hold. Lệnh đó thay file Turnip bằng Mesa Debian `25.0.7` và GUI hết Adreno. Chỉ unhold rồi cài lại các gói Debian sau khi đã xóa overlay và cố ý muốn driver của Debian.
+
 ## Xử lý sự cố
 
 | Triệu chứng | Việc kiểm tra |
@@ -204,7 +239,7 @@ Script dừng, disable và xoá unit, lệnh `vdesk`, launcher, `/etc/vdesk`, `/
 
 ## English summary
 
-Boot starts Debian Chromium on the ozone headless platform, without `--headless=new`, with `--disable-gpu` and CDP on `127.0.0.1:9222` and the same `--user-data-dir` used later for the headed browser. The launcher sets `TZ=Asia/Ho_Chi_Minh`, `--lang=vi-VN`, and a fixed screen size. `vdesk mode gui` starts Xvfb and `xfwm4`, then relaunches Chromium headed with `MESA_LOADER_DRIVER_OVERRIDE=kgsl`, `TU_DEBUG=noconform`, and `--use-angle=vulkan`. On `/dev/kgsl-3d0` that uses Turnip on Adreno. `--use-gl=egl` is not allowed by this Chromium, and `--use-angle=gl` drops the Xvfb connection when kgsl is forced. Xvfb has no DRI3, so GLX stays llvmpipe. Termux:X11 is not required for the Vulkan path. `vdesk view on` starts x11vnc on `127.0.0.1:5900` and noVNC/websockify on `127.0.0.1:6080`, switching to gui first if needed. `vdesk view off` stops only those two processes and does not restart Chromium. After a mode change, attach again with `patchright-cli attach --cdp=http://127.0.0.1:9222 --context=host`. Do not run `patchright-cli open` or `playwright-cli`.
+Boot starts Debian Chromium on the ozone headless platform, without `--headless=new`, with `--disable-gpu` and CDP on `127.0.0.1:9222` and the same `--user-data-dir` used later for the headed browser. The launcher sets `TZ=Asia/Ho_Chi_Minh`, `--lang=vi-VN`, and a fixed screen size. `vdesk mode gui` starts Xvfb and `xfwm4`, then relaunches Chromium headed. Turnip is used only when the GPU probe passes; otherwise gui mode uses SwiftShader. `--use-gl=egl` is not allowed by this Chromium, and `--use-angle=gl` drops the Xvfb connection when kgsl is forced. Xvfb has no DRI3, so GLX stays llvmpipe. Termux:X11 is not required for the Vulkan path. `vdesk view on` starts x11vnc on `127.0.0.1:5900` and noVNC/websockify on `127.0.0.1:6080`, switching to gui first if needed. `vdesk view off` stops only those two processes and does not restart Chromium. After a mode change, attach again with `patchright-cli attach --cdp=http://127.0.0.1:9222 --context=host`. Do not run `patchright-cli open` or `playwright-cli`.
 
 An idle timer returns to headless after 10 minutes with no VNC client and no CDP client. View alone turns off after 10 minutes with no VNC client.
 
