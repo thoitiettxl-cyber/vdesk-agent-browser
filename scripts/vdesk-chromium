@@ -102,7 +102,17 @@ if [[ ${mode} == gui ]]; then
     fi
     sleep 0.25
   done
-  args+=(--ozone-platform=x11 --window-position=0,0)
+  # kgsl selects the Freedreno driver for /dev/kgsl-3d0. TU_DEBUG=noconform
+  # lets Turnip advertise a usable Vulkan device. Set both before exec:
+  # Chromium clears unknown variables after startup, and the zygote does not
+  # pass them to the GPU process. The Vulkan ICD still binds Adreno without
+  # those variables in the GPU process. Do not add SwiftShader.
+  # --use-gl=egl is rejected (allowed pair is gl=egl-angle,angle=default).
+  # --use-angle=gl initializes GLX; with kgsl that kills the Xvfb connection.
+  # --use-angle=vulkan uses Turnip and reports Adreno in WebGL.
+  export MESA_LOADER_DRIVER_OVERRIDE=kgsl
+  export TU_DEBUG=noconform
+  args+=(--ozone-platform=x11 --window-position=0,0 --use-angle=vulkan)
 else
   unset DISPLAY || true
   # Ozone headless without --headless=new: screenshots still work, but the UA

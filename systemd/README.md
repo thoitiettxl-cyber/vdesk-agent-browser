@@ -48,7 +48,7 @@ If the service user is `root`, `install.sh` sets `VDESK_NO_SANDBOX=1`. The launc
 
 The launcher is `/usr/local/libexec/vdesk-chromium`. It execs `/usr/lib/chromium/chromium`, not `/usr/bin/chromium`, so Debian's `/etc/chromium.d` flags do not turn GPU rasterization and extension loading back on.
 
-RAM flags include `--disable-extensions`, `--disable-background-networking`, `--disable-component-update`, `--disable-sync`, and `--renderer-process-limit`. Headless adds `--ozone-platform=headless --disable-gpu --disable-software-rasterizer` and a fixed `--ozone-override-screen-size`. It does not pass `--headless=new`, because that flag made this Chromium advertise `HeadlessChrome`. SwiftShader WebGL used much more RAM and stays off. GUI uses `--ozone-platform=x11` and `DISPLAY=:1`. Installed extensions such as uBlock Origin Lite stay in the profile and are not loaded.
+RAM flags include `--disable-extensions`, `--disable-background-networking`, `--disable-component-update`, `--disable-sync`, and `--renderer-process-limit`. Headless adds `--ozone-platform=headless --disable-gpu --disable-software-rasterizer` and a fixed `--ozone-override-screen-size`. It does not pass `--headless=new`, because that flag made this Chromium advertise `HeadlessChrome`. SwiftShader stays off. GUI uses `--ozone-platform=x11`, `DISPLAY=:1`, `MESA_LOADER_DRIVER_OVERRIDE=kgsl`, `TU_DEBUG=noconform`, and `--use-angle=vulkan` when `/dev/kgsl-3d0` and the Android Mesa build are present. `--use-gl=egl` is rejected by this Chromium. `--use-angle=gl` breaks the Xvfb connection under kgsl. Installed extensions such as uBlock Origin Lite stay in the profile and are not loaded.
 
 ## PulseAudio
 
