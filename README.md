@@ -25,6 +25,7 @@ gui    vdesk mode gui
 view   vdesk view on
   x11vnc      127.0.0.1:5900
   websockify  127.0.0.1:6080
+  nếu VDESK_VNC_LISTEN được đặt, thêm đúng địa chỉ đó:5900
   Chromium không khởi động lại nếu đã ở gui
 ```
 
@@ -115,9 +116,25 @@ Thêm đoạn trong `pi/AGENTS.md.example` vào file hướng dẫn mà Pi đọ
 
 ## Kết nối từ điện thoại
 
-Cổng chỉ nghe `127.0.0.1`. Từ điện thoại, mở SSH tunnel rồi nối vào `localhost` của chính điện thoại. Trước đó chạy `vdesk view on` trên server. Headless không có màn hình để xem.
+Trước đó chạy `vdesk view on` trên server. Headless không có màn hình để xem.
+
+### AVNC thẳng vào IP container
+
+Trong `/etc/vdesk/config`:
+
+```bash
+VDESK_VNC_LISTEN=172.28.210.229
+```
+
+Đó là IPv4 của container trên `eth0`, không phải `0.0.0.0`. AVNC: host `172.28.210.229`, port `5900`, mật khẩu VNC đã đặt lúc cài. Không cần tunnel SSH cho cổng 5900. CDP `9222` và noVNC `6080` vẫn chỉ nghe `127.0.0.1`.
+
+`vdesk view on` từ chối nếu cổng 5900 không đúng hai địa chỉ `127.0.0.1` và `VDESK_VNC_LISTEN`, hoặc nếu có `0.0.0.0:5900` hay `[::]:5900`. x11vnc vẫn dùng `-localhost -no6 -noipv6`. Không dùng `-listen`: trên x11vnc 0.9.17, `-listen 172.28.210.229 -no6 -noipv6` vẫn mở `[::]:5900`. Một tiến trình chuyển tiếp chỉ bind địa chỉ đã đặt và nối vào `127.0.0.1:5900`, nên mật khẩu VNC vẫn bắt buộc.
+
+Địa chỉ này nằm trên mạng container, gateway `172.28.0.1`. Nếu DHCP đổi IP, sửa dòng đó rồi `vdesk view off` và `vdesk view on`. Bỏ trống biến để chỉ còn `127.0.0.1`.
 
 ### AVNC + tunnel cổng 5900
+
+Dùng khi `VDESK_VNC_LISTEN` để trống.
 
 Trên máy có SSH client:
 
@@ -164,8 +181,8 @@ Nếu lệnh lỗi, xem `vdesk status`, `systemctl status vdesk-browser` và `cu
 | Chromium báo không nối được dbus | Unit vẫn bọc `dbus-run-session`. Restart `vdesk-browser`. Không chạy Chromium trần ngoài session bus. |
 | Chromium thoát ngay khi user là root | Thiếu `--no-sandbox`. `VDESK_NO_SANDBOX=1` chỉ dành cho root. User thường thì để `0`. |
 | `9222` bị chiếm | `ss -ltnp \| grep 9222`. Dừng tiến trình Chromium khác đang giữ cổng, rồi `systemctl restart vdesk-browser`. |
-| VNC từ xa không vào | Đúng như thiết kế. Tunnel SSH trước. `ss` phải thấy `127.0.0.1:5900`, không thấy `0.0.0.0:5900` hay `[::]:5900`. |
-| VNC báo server không chạy | Chạy `vdesk view on`. Client dùng `127.0.0.1`, cổng `5900`. Headless không mở cổng 5900. x11vnc dùng `-localhost -no6 -noipv6`. |
+| VNC từ xa không vào | Nếu `VDESK_VNC_LISTEN` trống: tunnel SSH trước. `ss` phải thấy `127.0.0.1:5900`, không thấy `0.0.0.0:5900` hay `[::]:5900`. Nếu biến được đặt: AVNC dùng đúng IP đó, cổng `5900`, và `ss` phải thấy cả `127.0.0.1:5900` lẫn IP đó. |
+| VNC báo server không chạy | Chạy `vdesk view on`. Headless không mở cổng 5900. x11vnc dùng `-localhost -no6 -noipv6`. |
 | Sau reboot desktop cũng lên | Không đúng với bản này. `systemctl is-enabled vdesk-xvfb` phải là `disabled`. `vdesk status` lúc boot là `mode=headless`. |
 | Sau reboot không có CDP | `systemctl is-enabled vdesk-browser vdesk-apply vdesk-idle.timer` và `vdesk status`. |
 | Đổi mode xong Pi không bấm được | Attach cũ đã chết. Chạy lại `patchright-cli attach --cdp=http://127.0.0.1:9222 --context=host`. |
@@ -182,9 +199,9 @@ Script dừng, disable và xoá unit, lệnh `vdesk`, launcher, `/etc/vdesk`, `/
 
 ## Bảo mật
 
-- x11vnc dùng `-localhost -no6 -noipv6`, nên chỉ bind `127.0.0.1:5900`. `-listen 127.0.0.1` vẫn mở `[::]:5900` trên cổng 5900. noVNC nối thẳng `127.0.0.1:5900` và chỉ nghe `127.0.0.1:6080`. CDP cũng chỉ bind `127.0.0.1`.
-- `vdesk view on` từ chối tiếp nếu cổng VNC không còn đúng `127.0.0.1`.
-- Chỉ vào bằng SSH tunnel. Không publish `5900`, `6080`, hoặc `9222`.
+- x11vnc dùng `-localhost -no6 -noipv6`, nên chỉ bind `127.0.0.1:5900`. `-listen`, kể cả kèm `-no6 -noipv6`, vẫn mở `[::]:5900`. noVNC nối thẳng `127.0.0.1:5900` và chỉ nghe `127.0.0.1:6080`. CDP cũng chỉ bind `127.0.0.1`.
+- `VDESK_VNC_LISTEN` để trống thì `vdesk view on` từ chối nếu cổng 5900 không còn đúng `127.0.0.1`. Khi đặt một IPv4 của máy này, cổng 5900 phải đúng `127.0.0.1` và đúng IP đó, không có địa chỉ khác. Không đặt `0.0.0.0`.
+- Không publish `6080` hoặc `9222`. Không publish `5900` ra `0.0.0.0`. Khi `VDESK_VNC_LISTEN` trống, chỉ vào VNC bằng SSH tunnel.
 - CDP cho phép điều khiển trình duyệt đang đăng nhập. Lộ `9222` ra ngoài là trao quyền đó cho người khác.
 - Đặt mật khẩu VNC lúc cài. Không viết mật khẩu vào unit, README, script, hay `/etc/vdesk/config`.
 - Chạy bằng user thường. `--no-sandbox` với root chỉ dành cho máy thử.
@@ -195,4 +212,4 @@ Boot starts Debian Chromium on the ozone headless platform, without `--headless=
 
 An idle timer returns to headless after 10 minutes with no VNC client and no CDP client. View alone turns off after 10 minutes with no VNC client.
 
-Tested on Debian 13. Ubuntu 24.04 is not verified: its apt `chromium` package is a transitional Snap wrapper. `sudo ./install.sh` installs the packages, asks for the service user and resolution, prompts for a VNC password, and does not enable the display units. On this host, headless PSS was 415212 KB idle and 678169 KB with the same page open, against 662889 KB and 894581 KB for the old always-on headed stack, so headless stays the boot default. x11vnc uses `-localhost -no6 -noipv6` because `-listen 127.0.0.1` still opened `[::]:5900`. If IPv6 is disabled, the script removes `localhost` from the `::1` line in `/etc/hosts`. PulseAudio client configuration is unchanged: if `/tmp/.pulse-socket` or Droidspaces `PULSE_SERVER` is present, Chromium still uses that socket with shared memory disabled. Access the desktop only through an SSH tunnel. Do not expose ports `5900`, `6080`, or `9222`.
+Tested on Debian 13. Ubuntu 24.04 is not verified: its apt `chromium` package is a transitional Snap wrapper. `sudo ./install.sh` installs the packages, asks for the service user and resolution, prompts for a VNC password, and does not enable the display units. On this host, headless PSS was 415212 KB idle and 678169 KB with the same page open, against 662889 KB and 894581 KB for the old always-on headed stack, so headless stays the boot default. x11vnc uses `-localhost -no6 -noipv6` because `-listen`, including `-listen 172.28.210.229 -no6 -noipv6`, still opened `[::]:5900`. Set `VDESK_VNC_LISTEN` to one IPv4 on this host to also forward that address to `127.0.0.1:5900`; the VNC password still applies. Empty leaves VNC on loopback only. If IPv6 is disabled, the script removes `localhost` from the `::1` line in `/etc/hosts`. PulseAudio client configuration is unchanged: if `/tmp/.pulse-socket` or Droidspaces `PULSE_SERVER` is present, Chromium still uses that socket with shared memory disabled. When `VDESK_VNC_LISTEN` is empty, use an SSH tunnel for port 5900. Do not expose ports `6080` or `9222`, and do not bind VNC to `0.0.0.0`.

@@ -140,9 +140,16 @@ write_config() {
   local width=$4
   local height=$5
   local sandbox=0
+  local listen=""
 
   if [[ ${user} == root ]]; then
     sandbox=1
+  fi
+  if [[ -f /etc/vdesk/config ]]; then
+    listen=$(awk -F= '$1 == "VDESK_VNC_LISTEN" { print substr($0, index($0, "=") + 1) }' /etc/vdesk/config | tail -1)
+    if [[ -n ${listen} && ! ${listen} =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+      listen=""
+    fi
   fi
   install -d -m 755 /etc/vdesk /var/lib/vdesk
   cat > /etc/vdesk/config <<EOF
@@ -154,6 +161,7 @@ VDESK_HEIGHT=${height}
 VDESK_NO_SANDBOX=${sandbox}
 VDESK_RENDERER_LIMIT=2
 VDESK_IDLE_SEC=600
+VDESK_VNC_LISTEN=${listen}
 EOF
   chmod 644 /etc/vdesk/config
   if [[ ! -f /etc/vdesk/chromium-extra ]]; then
@@ -175,6 +183,7 @@ install_commands() {
   install -d -m 755 /usr/local/bin /usr/local/libexec
   install -m 755 "${SCRIPT_DIR}/scripts/vdesk" /usr/local/bin/vdesk
   install -m 755 "${SCRIPT_DIR}/scripts/vdesk-chromium" /usr/local/libexec/vdesk-chromium
+  install -m 755 "${SCRIPT_DIR}/scripts/vdesk-x11vnc" /usr/local/libexec/vdesk-x11vnc
 }
 
 install_sudoers() {
@@ -466,7 +475,7 @@ Installed. Boot mode is headless: Chromium only, CDP on 127.0.0.1:9222.
   vdesk status
 After a mode change, run: patchright-cli attach --cdp=http://127.0.0.1:9222 --context=host
 Append pi/AGENTS.md.example to ${skill_home}/.pi/agent/AGENTS.md before Pi uses the browser.
-Connect only through an SSH tunnel. Do not publish ports 5900, 6080, or 9222.
+Leave VDESK_VNC_LISTEN empty unless AVNC should connect to one IPv4 on this host. Do not set 0.0.0.0. Do not publish ports 6080 or 9222.
 EOF
 }
 

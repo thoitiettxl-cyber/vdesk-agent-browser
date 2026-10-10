@@ -32,7 +32,7 @@ rmdir /etc/systemd/system/vdesk-browser.service.d 2>/dev/null || true
 rm -f /etc/pulse/client.conf.d/vdesk.conf
 systemctl disable --now vdesk-audio.service || true
 rm -f /etc/systemd/system/vdesk-audio.service /usr/local/sbin/vdesk-aaudio.sh
-rm -f /usr/local/bin/vdesk /usr/local/libexec/vdesk-chromium /etc/sudoers.d/vdesk
+rm -f /usr/local/bin/vdesk /usr/local/libexec/vdesk-chromium /usr/local/libexec/vdesk-x11vnc /etc/sudoers.d/vdesk
 rm -f /usr/local/bin/patchright-cli
 rm -rf /usr/local/lib/vdesk-patchright /etc/vdesk /var/lib/vdesk
 

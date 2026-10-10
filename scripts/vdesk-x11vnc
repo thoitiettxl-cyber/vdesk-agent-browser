@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+# Start x11vnc for vdesk.
+# VDESK_VNC_LISTEN empty: -localhost -no6 -noipv6, 127.0.0.1:5900 only.
+# Set to one IPv4 on this host: x11vnc stays on 127.0.0.1, and a forwarder
+# binds only that address. Do not pass -listen. Measured on x11vnc 0.9.17:
+# -listen 172.28.210.229 -no6 -noipv6 still opened [::]:5900.
+set -euo pipefail
+
+CONFIG=/etc/vdesk/config
+
+die() {
+  printf 'vdesk-x11vnc: %s\n' "$*" >&2
+  exit 1
+}
+
+# shellcheck disable=SC1090
+[[ -f ${CONFIG} ]] || die "missing ${CONFIG}"
+# shellcheck disable=SC1090
+source "${CONFIG}"
+: "${VDESK_HOME:?}"
+
+valid_ipv4() {
+  local ip=$1 o1 o2 o3 o4
+  [[ ${ip} =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]] || return 1
+  o1=${BASH_REMATCH[1]}
+  o2=${BASH_REMATCH[2]}
+  o3=${BASH_REMATCH[3]}
+  o4=${BASH_REMATCH[4]}
+  [[ ${o1} -le 255 && ${o2} -le 255 && ${o3} -le 255 && ${o4} -le 255 ]] || return 1
+  [[ ${o1} == 0[0-9]* || ${o2} == 0[0-9]* || ${o3} == 0[0-9]* || ${o4} == 0[0-9]* ]] && return 1
+  return 0
+}
+
+listen_ip() {
+  local ip=${VDESK_VNC_LISTEN:-}
+  local first
+  if [[ -z ${ip} || ${ip} == 127.0.0.1 ]]; then
+    printf '127.0.0.1\n'
+    return 0
+  fi
+  valid_ipv4 "${ip}" || die "VDESK_VNC_LISTEN must be one IPv4 address, not '${ip}'"
+  if [[ ${ip} == 0.0.0.0 || ${ip} == 255.255.255.255 ]]; then
+    die "VDESK_VNC_LISTEN must not be ${ip}"
+  fi
+  first=${ip%%.*}
+  if [[ ${first} -eq 0 || ${first} -ge 224 || ${first} -eq 127 ]]; then
+    die "VDESK_VNC_LISTEN must be a unicast address on this host, not '${ip}'"
+  fi
+  printf '%s\n' "${ip}"
+}
+
+ip_is_local() {
+  local ip=$1
+  ip -4 -o addr show | awk -v want="${ip}/" 'index($4, want) == 1 { found = 1 } END { exit found ? 0 : 1 }'
+}
+
+port_addrs() {
+  ss -Hltn 'sport = :5900' 2>/dev/null | awk '{ print $4 }'
+}
+
+wait_local_vnc() {
+  local pid=$1 _
+  for _ in $(seq 1 40); do
+    if port_addrs | grep -qx '127.0.0.1:5900'; then
+      return 0
+    fi
+    if ! kill -0 "${pid}" 2>/dev/null; then
+      wait "${pid}" || true
+      die "x11vnc exited before binding 127.0.0.1:5900"
+    fi
+    sleep 0.1
+  done
+  die "x11vnc did not bind 127.0.0.1:5900"
+}
+
+assert_bound() {
+  local ip=$1 addr bad=0 seen_local=0 seen_extra=0
+  while IFS= read -r addr; do
+    [[ -z ${addr} ]] && continue
+    case ${addr} in
+      127.0.0.1:5900) seen_local=1 ;;
+      "${ip}:5900") seen_extra=1 ;;
+      *)
+        printf 'vdesk-x11vnc: unexpected listener %s\n' "${addr}" >&2
+        bad=1
+        ;;
+    esac
+  done < <(port_addrs)
+  [[ ${bad} -eq 0 && ${seen_local} -eq 1 && ${seen_extra} -eq 1 ]] || die "VNC listeners were not 127.0.0.1:5900 and ${ip}:5900 only"
+}
+
+run_x11vnc() {
+  local ip=$1 vnc_pid fwd_pid _
+  [[ -f ${VDESK_HOME}/.vnc/passwd ]] || die "missing ${VDESK_HOME}/.vnc/passwd"
+  if [[ ${ip} == 127.0.0.1 ]]; then
+    exec /usr/bin/x11vnc -display :1 -localhost -no6 -noipv6 -shared -forever -noxdamage -rfbport 5900 -rfbauth "${VDESK_HOME}/.vnc/passwd" -quiet
+  fi
+  ip_is_local "${ip}" || die "${ip} is not assigned on this host; refusing to listen"
+  /usr/bin/x11vnc -display :1 -localhost -no6 -noipv6 -shared -forever -noxdamage -rfbport 5900 -rfbauth "${VDESK_HOME}/.vnc/passwd" -quiet &
+  vnc_pid=$!
+  cleanup() {
+    kill "${vnc_pid}" "${fwd_pid:-}" 2>/dev/null || true
+    wait "${vnc_pid}" "${fwd_pid:-}" 2>/dev/null || true
+  }
+  trap cleanup EXIT
+  trap 'exit 0' TERM INT
+  wait_local_vnc "${vnc_pid}"
+  /usr/bin/python3 - "${ip}" 5900 127.0.0.1 5900 <<'PY' &
+import socket
+import sys
+import threading
+
+listen_ip, listen_port, dest_ip, dest_port = sys.argv[1:5]
+listen_port = int(listen_port)
+dest_port = int(dest_port)
+
+def copy(src, dst):
+    try:
+        while True:
+            data = src.recv(65536)
+            if not data:
+                break
+            dst.sendall(data)
+    except Exception:
+        pass
+    finally:
+        for sock, how in ((src, socket.SHUT_RD), (dst, socket.SHUT_WR)):
+            try:
+                sock.shutdown(how)
+            except Exception:
+                pass
+
+def handle(client):
+    upstream = None
+    try:
+        upstream = socket.create_connection((dest_ip, dest_port), timeout=5)
+        left = threading.Thread(target=copy, args=(client, upstream), daemon=True)
+        right = threading.Thread(target=copy, args=(upstream, client), daemon=True)
+        left.start()
+        right.start()
+        left.join()
+        right.join()
+    except Exception:
+        pass
+    finally:
+        client.close()
+        if upstream is not None:
+            upstream.close()
+
+server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind((listen_ip, listen_port))
+server.listen(32)
+while True:
+    client, _addr = server.accept()
+    threading.Thread(target=handle, args=(client,), daemon=True).start()
+PY
+  fwd_pid=$!
+  for _ in $(seq 1 20); do
+    if port_addrs | grep -qx "${ip}:5900"; then
+      break
+    fi
+    if ! kill -0 "${fwd_pid}" 2>/dev/null; then
+      die "forwarder exited before binding ${ip}:5900"
+    fi
+    sleep 0.1
+  done
+  assert_bound "${ip}"
+  wait -n "${vnc_pid}" "${fwd_pid}"
+  exit 1
+}
+
+main() {
+  local ip
+  ip=$(listen_ip)
+  case ${1:-} in
+    listen-addr)
+      if [[ ${ip} != 127.0.0.1 ]]; then
+        ip_is_local "${ip}" || die "${ip} is not assigned on this host; refusing to listen"
+      fi
+      printf '%s\n' "${ip}"
+      ;;
+    x11vnc)
+      run_x11vnc "${ip}"
+      ;;
+    *)
+      die "usage: vdesk-x11vnc listen-addr|x11vnc"
+      ;;
+  esac
+}
+
+main "$@"

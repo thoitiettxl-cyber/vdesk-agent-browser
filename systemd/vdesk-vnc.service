@@ -1,11 +1,12 @@
 # Template. install.sh replaces @VDESK_USER@ and @VDESK_HOME@.
 # Not enabled at boot. `vdesk view on` starts it.
-# -localhost -no6 -noipv6 binds only 127.0.0.1:5900. -listen 127.0.0.1 still opened
-# [::]:5900 on port 5900. The password file is created on the target machine.
-# Do not commit it.
+# Listen address comes from VDESK_VNC_LISTEN in /etc/vdesk/config.
+# Empty uses -localhost -no6 -noipv6. A set address keeps that bind and adds a
+# forwarder on that IPv4 only. -listen still opened [::]:5900, so do not use it.
+# The password file is created on the target machine. Do not commit it.
 
 [Unit]
-Description=x11vnc on 127.0.0.1:5900
+Description=x11vnc for vdesk
 Requires=vdesk-xvfb.service
 After=vdesk-xvfb.service
 PartOf=vdesk-xvfb.service
@@ -13,6 +14,6 @@ PartOf=vdesk-xvfb.service
 [Service]
 User=@VDESK_USER@
 ExecStartPre=/bin/sh -c 'until [ -S /tmp/.X11-unix/X1 ]; do sleep 0.5; done'
-ExecStart=/usr/bin/x11vnc -display :1 -localhost -no6 -noipv6 -shared -forever -noxdamage -rfbport 5900 -rfbauth @VDESK_HOME@/.vnc/passwd -quiet
+ExecStart=/usr/local/libexec/vdesk-x11vnc x11vnc
 Restart=always
 RestartSec=2

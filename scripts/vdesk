@@ -142,21 +142,45 @@ listen_addrs() {
   ss -Hltn "sport = :${port}" 2>/dev/null | awk '{ print $4 }'
 }
 
-assert_loopback_port() {
+assert_port_only() {
   local port=$1
-  local addrs addr count
+  shift
+  local -a expect=("$@")
+  local addrs addr exp found
+  local -a seen=()
   addrs=$(listen_addrs "${port}")
-  count=0
   [[ -n ${addrs} ]] || return 1
   while IFS= read -r addr; do
     [[ -z ${addr} ]] && continue
-    count=$((count + 1))
-    if [[ ${addr} != "127.0.0.1:${port}" ]]; then
-      printf 'vdesk: port %s is bound to %s, expected 127.0.0.1:%s only\n' "${port}" "${addr}" "${port}" >&2
+    found=0
+    for exp in "${expect[@]}"; do
+      if [[ ${addr} == "${exp}" ]]; then
+        found=1
+        break
+      fi
+    done
+    if [[ ${found} -ne 1 ]]; then
+      printf 'vdesk: port %s is bound to %s, expected %s only\n' "${port}" "${addr}" "${expect[*]}" >&2
       return 1
     fi
+    seen+=("${addr}")
   done <<< "${addrs}"
-  [[ ${count} -gt 0 ]]
+  if [[ ${#seen[@]} -ne ${#expect[@]} ]]; then
+    printf 'vdesk: port %s has %s listener(s), expected %s\n' "${port}" "${#seen[@]}" "${expect[*]}" >&2
+    return 1
+  fi
+  for exp in "${expect[@]}"; do
+    found=0
+    for addr in "${seen[@]}"; do
+      if [[ ${addr} == "${exp}" ]]; then
+        found=1
+      fi
+    done
+    if [[ ${found} -ne 1 ]]; then
+      printf 'vdesk: port %s is missing %s\n' "${port}" "${exp}" >&2
+      return 1
+    fi
+  done
 }
 
 start_display() {
@@ -175,11 +199,18 @@ stop_view_units() {
 }
 
 start_view_units() {
-  local _
+  local listen _
+  local -a vnc_expect
+  listen=$(/usr/local/libexec/vdesk-x11vnc listen-addr)
+  if [[ ${listen} == 127.0.0.1 ]]; then
+    vnc_expect=("127.0.0.1:5900")
+  else
+    vnc_expect=("127.0.0.1:5900" "${listen}:5900")
+  fi
   systemctl --quiet start vdesk-vnc.service
   systemctl --quiet start vdesk-novnc.service
-  for _ in $(seq 1 20); do
-    if assert_loopback_port 5900 && assert_loopback_port 6080; then
+  for _ in $(seq 1 40); do
+    if assert_port_only 5900 "${vnc_expect[@]}" && assert_port_only 6080 "127.0.0.1:6080"; then
       write_state view on
       return 0
     fi
@@ -187,7 +218,7 @@ start_view_units() {
   done
   systemctl --quiet stop vdesk-novnc.service vdesk-vnc.service || true
   write_state view off
-  die "VNC did not bind 127.0.0.1:5900 and 127.0.0.1:6080"
+  die "VNC did not bind ${vnc_expect[*]} and 127.0.0.1:6080"
 }
 
 flush_chromium() {
@@ -293,12 +324,14 @@ cmd_mode_gui() {
 
 cmd_view_on() {
   local restarted=no
+  local listen
+  listen=$(/usr/local/libexec/vdesk-x11vnc listen-addr)
   if [[ $(read_state mode headless) != gui ]] || ! browser_is_headed; then
     restarted=$(ensure_gui)
   fi
   start_view_units
   stamp_activity
-  printf 'mode=gui\nview=on\nrestarted=%s\nreattach=%s\ncdp=http://127.0.0.1:9222\n' "${restarted}" "${restarted}"
+  printf 'mode=gui\nview=on\nrestarted=%s\nreattach=%s\ncdp=http://127.0.0.1:9222\nvnc=%s:5900\n' "${restarted}" "${restarted}" "${listen}"
 }
 
 cmd_view_off() {
@@ -354,6 +387,11 @@ cmd_status() {
   printf 'chromium_rss_kb=%s\n' "${chromium_rss}"
   printf 'display_rss_kb=%s\n' "${display_rss}"
   printf 'idle_sec=%s\n' "${VDESK_IDLE_SEC}"
+  if [[ -n ${VDESK_VNC_LISTEN:-} ]]; then
+    printf 'vnc_listen=%s\n' "${VDESK_VNC_LISTEN}"
+  else
+    printf 'vnc_listen=%s\n' "127.0.0.1"
+  fi
   printf 'listeners='
   ss -Hltn 2>/dev/null | awk '
     $4 ~ /:(5900|6080|9222)$/ { printf "%s ", $4 }
