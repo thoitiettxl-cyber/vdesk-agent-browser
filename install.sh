@@ -383,6 +383,26 @@ enable_units() {
   done
 }
 
+assert_install_listeners() {
+  local nat_ip="" addr
+  nat_ip=$(/usr/local/libexec/vdesk-x11vnc listen-addr 2>/dev/null || true)
+  if [[ ${nat_ip} == 127.0.0.1 ]]; then
+    nat_ip=""
+  fi
+  while IFS= read -r addr; do
+    [[ -z ${addr} ]] && continue
+    case ${addr} in
+      127.0.0.1:6080|127.0.0.1:9222|127.0.0.1:5900) ;;
+      "${nat_ip}:5900")
+        [[ -n ${nat_ip} ]] || die "unexpected listener ${addr}"
+        ;;
+      *)
+        die "unexpected listener ${addr}; 6080 and 9222 must stay on 127.0.0.1, and 5900 may add only the current NAT address"
+        ;;
+    esac
+  done < <(ss -Hltn | awk '$4 ~ /:(5900|6080|9222)$/ { print $4 }')
+}
+
 print_checks() {
   local ready=0
   local attempt
@@ -390,9 +410,7 @@ print_checks() {
   /usr/local/bin/vdesk status || true
   printf '\n== listeners ==\n'
   ss -ltnp | grep -E ':(5900|6080|9222)' || true
-  if ss -ltn | awk '$4 ~ /:(5900|6080|9222)$/ && $4 !~ /^127\.0\.0\.1:/ { found = 1 } END { exit found ? 0 : 1 }'; then
-    die "a vdesk port is not bound to 127.0.0.1 only"
-  fi
+  assert_install_listeners
   printf '\n== CDP ==\n'
   for attempt in 1 2 3 4 5 6 7 8 9 10; do
     if curl -fsS http://127.0.0.1:9222/json/version; then
