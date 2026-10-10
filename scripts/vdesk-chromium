@@ -2,6 +2,8 @@
 # Launch the shared Chromium profile in the mode recorded by `vdesk`.
 # CDP stays on 127.0.0.1:9222. --no-sandbox is added only when install.sh
 # recorded a root service user. Do not point this process at another profile.
+# Do not pass --headless or --enable-automation. --headless=new makes this
+# Debian Chromium advertise HeadlessChrome, which bot checks treat as automation.
 set -euo pipefail
 
 CONFIG=/etc/vdesk/config
@@ -33,10 +35,14 @@ if [[ ! -x ${bin} ]]; then
   bin=/usr/bin/chromium
 fi
 
- # Call the real binary. /usr/bin/chromium prepends --load-extension from
- # /etc/chromium.d, which would undo --disable-extensions. Headless adds
- # --disable-gpu --disable-software-rasterizer; that pair used less RAM than
- # --use-angle=swiftshader --enable-unsafe-swiftshader and still screenshots.
+# Chromium reads TZ. /etc/localtime on this image is UTC, so the unit and
+# this process both set the zone. Asia/Ho_Chi_Minh is the requested zone.
+export TZ=Asia/Ho_Chi_Minh
+
+# Call the real binary. /usr/bin/chromium prepends --load-extension from
+# /etc/chromium.d, which would undo --disable-extensions. Headless adds
+# --disable-gpu --disable-software-rasterizer; that pair used less RAM than
+# --use-angle=swiftshader --enable-unsafe-swiftshader and still screenshots.
 args=(
   --no-first-run
   --no-default-browser-check
@@ -73,6 +79,10 @@ if [[ -f ${EXTRA} ]]; then
       ''|\#*) continue ;;
     esac
     case ${line} in
+      --enable-automation|--enable-automation=*|--headless|--headless=*)
+        printf 'vdesk-chromium: refusing %s; it marks the browser as automated\n' "${line}" >&2
+        continue
+        ;;
       -*) args+=("${line}") ;;
       *) printf 'vdesk-chromium: ignoring extra flag %s\n' "${line}" >&2 ;;
     esac
@@ -92,12 +102,27 @@ if [[ ${mode} == gui ]]; then
     fi
     sleep 0.25
   done
-  args+=(--ozone-platform=x11)
+  args+=(--ozone-platform=x11 --window-position=0,0)
 else
   unset DISPLAY || true
-  # Least-RAM headless pair that still screenshots: measured lower than
-  # --use-angle=swiftshader --enable-unsafe-swiftshader on this host.
-  args+=(--headless=new --ozone-platform=headless --disable-gpu --disable-software-rasterizer)
+  # Ozone headless without --headless=new: screenshots still work, but the UA
+  # stays Chrome/ instead of HeadlessChrome. Set the screen here; otherwise
+  # Chromium defaults the headless screen to 800x600. SwiftShader WebGL was
+  # far heavier on this host, so it stays off.
+  args+=(
+    --ozone-platform=headless
+    --disable-gpu
+    --disable-software-rasterizer
+    --ozone-override-screen-size="${VDESK_WIDTH},${VDESK_HEIGHT}"
+  )
 fi
+
+# After extra flags, so a profile file cannot drop these.
+args+=(
+  --lang=vi-VN
+  --accept-lang=vi-VN,vi,en-US,en
+  --disable-blink-features=AutomationControlled
+  --force-device-scale-factor=1
+)
 
 exec /usr/bin/dbus-run-session -- "${bin}" "${args[@]}"

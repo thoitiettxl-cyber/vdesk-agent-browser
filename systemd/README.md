@@ -13,13 +13,13 @@ Boot enables only `vdesk-apply`, `vdesk-browser`, and `vdesk-idle.timer`. Xvfb, 
 
 `/etc/vdesk/config` also sets `VDESK_NO_SANDBOX` (1 only when the service user is root), `VDESK_RENDERER_LIMIT` (default 2), and `VDESK_IDLE_SEC` (default 600). Set `VDESK_IDLE_SEC=0` to disable the idle return to headless.
 
-`/etc/vdesk/chromium-extra` is optional, one Chromium flag per line. `install.sh` does not overwrite it. A previous local unit on this kind of host used `--lang=vi-VN` and `--disable-blink-features=AutomationControlled`; put those there if you still want them.
+`/etc/vdesk/chromium-extra` is optional, one Chromium flag per line. `install.sh` does not overwrite it. The launcher already sets `--lang=vi-VN`, `TZ=Asia/Ho_Chi_Minh`, and `--disable-blink-features=AutomationControlled`. It refuses `--enable-automation` and `--headless`.
 
 ## Modes
 
 | Command | What stays running |
 |---|---|
-| `vdesk mode headless` | Chromium `--headless=new` and CDP `127.0.0.1:9222`. This is the boot default. |
+| `vdesk mode headless` | Chromium on `--ozone-platform=headless`, without `--headless=new`, and CDP `127.0.0.1:9222`. This is the boot default. |
 | `vdesk mode gui` | Xvfb `:1`, `xfwm4`, headed Chromium, same profile and CDP port. |
 | `vdesk view on` | x11vnc on `127.0.0.1:5900` and websockify on `127.0.0.1:6080`. Starts gui first if needed. |
 | `vdesk view off` | Stops only x11vnc and websockify. Chromium keeps its PID. |
@@ -48,7 +48,7 @@ If the service user is `root`, `install.sh` sets `VDESK_NO_SANDBOX=1`. The launc
 
 The launcher is `/usr/local/libexec/vdesk-chromium`. It execs `/usr/lib/chromium/chromium`, not `/usr/bin/chromium`, so Debian's `/etc/chromium.d` flags do not turn GPU rasterization and extension loading back on.
 
-RAM flags include `--disable-extensions`, `--disable-background-networking`, `--disable-component-update`, `--disable-sync`, and `--renderer-process-limit`. Headless adds `--headless=new --disable-gpu --disable-software-rasterizer`. That pair used less RAM than `--use-angle=swiftshader --enable-unsafe-swiftshader` and still produced a readable screenshot. GUI uses `--ozone-platform=x11` and `DISPLAY=:1`. Installed extensions such as uBlock Origin Lite stay in the profile and are not loaded.
+RAM flags include `--disable-extensions`, `--disable-background-networking`, `--disable-component-update`, `--disable-sync`, and `--renderer-process-limit`. Headless adds `--ozone-platform=headless --disable-gpu --disable-software-rasterizer` and a fixed `--ozone-override-screen-size`. It does not pass `--headless=new`, because that flag made this Chromium advertise `HeadlessChrome`. SwiftShader WebGL used much more RAM and stays off. GUI uses `--ozone-platform=x11` and `DISPLAY=:1`. Installed extensions such as uBlock Origin Lite stay in the profile and are not loaded.
 
 ## PulseAudio
 

@@ -96,7 +96,9 @@ browser_is_headless() {
   pid=$(chromium_pid || true)
   [[ -n ${pid} ]] || return 1
   cmd=$(tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null || true)
-  [[ ${cmd} == *--headless* ]]
+  # Current launcher uses ozone headless and does not pass --headless.
+  # --headless remains recognized so an older process still counts.
+  [[ ${cmd} == *--ozone-platform=headless* || ${cmd} == *--headless* ]]
 }
 
 browser_is_headed() {
@@ -105,7 +107,7 @@ browser_is_headed() {
   pid=$(chromium_pid || true)
   [[ -n ${pid} ]] || return 1
   cmd=$(tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null || true)
-  [[ ${cmd} != *--headless* && ${cmd} == *--ozone-platform=x11* ]]
+  [[ ${cmd} != *--headless* && ${cmd} != *--ozone-platform=headless* && ${cmd} == *--ozone-platform=x11* ]]
 }
 
 wait_x() {

@@ -10,6 +10,7 @@ Wants=vdesk-apply.service
 
 [Service]
 User=@VDESK_USER@
+Environment=TZ=Asia/Ho_Chi_Minh
 ExecStart=/usr/local/libexec/vdesk-chromium
 Restart=always
 RestartSec=5
