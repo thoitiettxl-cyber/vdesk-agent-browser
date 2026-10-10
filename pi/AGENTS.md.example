@@ -4,6 +4,6 @@
 - Mặc định là headless vì đo PSS thấp hơn stack headed luôn bật. Chỉ gọi `vdesk mode gui` khi trang chặn headless, cần hộp thoại, kéo thả, hoặc thao tác chỉ có trên giao diện thật.
 - `vdesk mode headless` và `vdesk mode gui` khởi động lại Chromium. Phiên attach cũ mất. Chạy lại `patchright-cli attach --cdp=http://127.0.0.1:9222 --context=host` trước khi điều khiển tiếp. `restarted=yes` trong output của `vdesk` nghĩa là phải attach lại.
 - `vdesk view on` bật VNC để người xem mở AVNC. Nếu đang headless, lệnh chuyển sang gui trước; lần đó Chromium khởi động lại và phải attach lại. Khi đã ở gui, `vdesk view on` và `vdesk view off` không khởi động lại Chromium, không cần attach lại.
-- Nếu `vdesk status` in `vnc_listen` khác `127.0.0.1`, AVNC nối thẳng vào địa chỉ đó, cổng `5900`, vẫn dùng mật khẩu VNC. Không cần tunnel SSH cho cổng 5900. `6080` và `9222` vẫn chỉ ở `127.0.0.1`.
+- Nếu `vdesk status` in `vnc_listen` khác `127.0.0.1`, đó là IPv4 hiện tại của `eth0` trong mạng NAT. AVNC nối thẳng vào địa chỉ đó, cổng `5900`, vẫn dùng mật khẩu VNC. Host mode chỉ có `127.0.0.1`. `6080` và `9222` vẫn chỉ ở `127.0.0.1`.
 - Trước khi bảo người dùng mở AVNC, chạy `vdesk view on`. Nếu có thể cần người xem giữa chừng, gọi `vdesk mode gui` trước khi mở trang, để khỏi đổi chế độ đúng lúc trang đang mở.
 - Xong việc cần giao diện thì `vdesk mode headless` để trả RAM. Không gọi `vdesk mode gui` nếu headless đủ dùng. Không có người xem và không có CDP trong khoảng 10 phút thì máy tự về headless.

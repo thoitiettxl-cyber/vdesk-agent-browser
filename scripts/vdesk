@@ -387,11 +387,13 @@ cmd_status() {
   printf 'chromium_rss_kb=%s\n' "${chromium_rss}"
   printf 'display_rss_kb=%s\n' "${display_rss}"
   printf 'idle_sec=%s\n' "${VDESK_IDLE_SEC}"
-  if [[ -n ${VDESK_VNC_LISTEN:-} ]]; then
-    printf 'vnc_listen=%s\n' "${VDESK_VNC_LISTEN}"
+  if listen=$(/usr/local/libexec/vdesk-x11vnc listen-addr 2>/tmp/vdesk-vnc-listen.err); then
+    printf 'vnc_listen=%s\n' "${listen}"
   else
-    printf 'vnc_listen=%s\n' "127.0.0.1"
+    printf 'vnc_listen=\n'
+    printf 'vnc_error=%s\n' "$(tr '\n' ' ' < /tmp/vdesk-vnc-listen.err)"
   fi
+  rm -f /tmp/vdesk-vnc-listen.err
   printf 'listeners='
   ss -Hltn 2>/dev/null | awk '
     $4 ~ /:(5900|6080|9222)$/ { printf "%s ", $4 }

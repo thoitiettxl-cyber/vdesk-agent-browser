@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Start x11vnc for vdesk.
-# VDESK_VNC_LISTEN empty: -localhost -no6 -noipv6, 127.0.0.1:5900 only.
-# Set to one IPv4 on this host: x11vnc stays on 127.0.0.1, and a forwarder
-# binds only that address. Do not pass -listen. Measured on x11vnc 0.9.17:
-# -listen 172.28.210.229 -no6 -noipv6 still opened [::]:5900.
+# Listen address comes from Droidspaces, not from a hardcoded IP.
+# host: 127.0.0.1 only. nat: current global IPv4 on eth0, forwarded from
+# x11vnc on 127.0.0.1. none, or nat with no address, is an error.
+# Do not pass -listen. Measured on x11vnc 0.9.17: -listen still opened [::]:5900.
 set -euo pipefail
 
 CONFIG=/etc/vdesk/config
@@ -31,22 +31,60 @@ valid_ipv4() {
   return 0
 }
 
+net_mode() {
+  local config=/run/droidspaces/container.config
+  local mode
+  [[ -f ${config} ]] || die "missing ${config}; cannot tell Host, NAT, and None apart"
+  if ! mode=$(awk -F= '$1 == "net_mode" { print $2; found = 1 } END { if (!found) exit 1 }' "${config}"); then
+    die "net_mode is missing from ${config}"
+  fi
+  printf '%s\n' "${mode}"
+}
+
+eth0_ipv4() {
+  local -a ips=()
+  local ip
+  if ! ip -4 link show dev eth0 >/dev/null 2>&1; then
+    die "NAT mode but eth0 is not present"
+  fi
+  while IFS= read -r ip; do
+    [[ -n ${ip} ]] || continue
+    ips+=("${ip}")
+  done < <(ip -4 -o addr show dev eth0 scope global | awk '{ split($4, a, "/"); print a[1] }')
+  if [[ ${#ips[@]} -eq 0 ]]; then
+    die "NAT mode but eth0 has no global IPv4"
+  fi
+  if [[ ${#ips[@]} -gt 1 ]]; then
+    die "NAT mode but eth0 has more than one global IPv4: ${ips[*]}"
+  fi
+  valid_ipv4 "${ips[0]}" || die "eth0 IPv4 is not a usable address: ${ips[0]}"
+  if [[ ${ips[0]} == 0.0.0.0 || ${ips[0]} == 127.0.0.1 ]]; then
+    die "eth0 IPv4 must not be ${ips[0]}"
+  fi
+  printf '%s\n' "${ips[0]}"
+}
+
 listen_ip() {
-  local ip=${VDESK_VNC_LISTEN:-}
-  local first
-  if [[ -z ${ip} || ${ip} == 127.0.0.1 ]]; then
-    printf '127.0.0.1\n'
-    return 0
-  fi
-  valid_ipv4 "${ip}" || die "VDESK_VNC_LISTEN must be one IPv4 address, not '${ip}'"
-  if [[ ${ip} == 0.0.0.0 || ${ip} == 255.255.255.255 ]]; then
-    die "VDESK_VNC_LISTEN must not be ${ip}"
-  fi
-  first=${ip%%.*}
-  if [[ ${first} -eq 0 || ${first} -ge 224 || ${first} -eq 127 ]]; then
-    die "VDESK_VNC_LISTEN must be a unicast address on this host, not '${ip}'"
-  fi
-  printf '%s\n' "${ip}"
+  local mode ip
+  mode=$(net_mode) || exit 1
+  case ${mode} in
+    host)
+      printf '127.0.0.1\n'
+      ;;
+    nat)
+      ip=$(eth0_ipv4) || exit 1
+      printf '%s\n' "${ip}"
+      ;;
+    none)
+      die "net_mode=none has no reachable VNC address"
+      ;;
+    "")
+      die "net_mode is empty in /run/droidspaces/container.config"
+      ;;
+    *)
+      die "unsupported net_mode=${mode}; expected host, nat, or none"
+      ;;
+  esac
 }
 
 ip_is_local() {

@@ -1,8 +1,8 @@
 # Template. install.sh replaces @VDESK_USER@ and @VDESK_HOME@.
 # Not enabled at boot. `vdesk view on` starts it.
-# Listen address comes from VDESK_VNC_LISTEN in /etc/vdesk/config.
-# Empty uses -localhost -no6 -noipv6. A set address keeps that bind and adds a
-# forwarder on that IPv4 only. -listen still opened [::]:5900, so do not use it.
+# Listen address comes from /run/droidspaces/container.config.
+# host: -localhost only. nat: that bind plus a forwarder on eth0's current
+# IPv4. -listen still opened [::]:5900, so do not use it.
 # The password file is created on the target machine. Do not commit it.
 
 [Unit]

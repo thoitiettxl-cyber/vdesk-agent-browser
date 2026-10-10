@@ -11,7 +11,7 @@ Boot enables only `vdesk-apply`, `vdesk-browser`, and `vdesk-idle.timer`. Xvfb, 
 | `@VDESK_GEOMETRY@` | `WIDTHxHEIGHT`, default `1920x1200` |
 | `@VDESK_WIDTH@` / `@VDESK_HEIGHT@` | Written to `/etc/vdesk/config` for Chromium `--window-size` |
 
-`/etc/vdesk/config` also sets `VDESK_NO_SANDBOX` (1 only when the service user is root), `VDESK_RENDERER_LIMIT` (default 2), `VDESK_IDLE_SEC` (default 600), and `VDESK_VNC_LISTEN` (empty by default). Set `VDESK_IDLE_SEC=0` to disable the idle return to headless. Set `VDESK_VNC_LISTEN` to one IPv4 assigned on this host, never `0.0.0.0`, to let AVNC connect to that address on port 5900. The VNC password file is still required.
+`/etc/vdesk/config` also sets `VDESK_NO_SANDBOX` (1 only when the service user is root), `VDESK_RENDERER_LIMIT` (default 2), and `VDESK_IDLE_SEC` (default 600). Set `VDESK_IDLE_SEC=0` to disable the idle return to headless. The VNC address is not stored here. `vdesk view on` reads `net_mode` from `/run/droidspaces/container.config`.
 
 `/etc/vdesk/chromium-extra` is optional, one Chromium flag per line. `install.sh` does not overwrite it. The launcher already sets `--lang=vi-VN`, `TZ=Asia/Ho_Chi_Minh`, and `--disable-blink-features=AutomationControlled`. It refuses `--enable-automation` and `--headless`.
 
@@ -21,7 +21,7 @@ Boot enables only `vdesk-apply`, `vdesk-browser`, and `vdesk-idle.timer`. Xvfb, 
 |---|---|
 | `vdesk mode headless` | Chromium on `--ozone-platform=headless`, without `--headless=new`, and CDP `127.0.0.1:9222`. This is the boot default. |
 | `vdesk mode gui` | Xvfb `:1`, `xfwm4`, headed Chromium, same profile and CDP port. |
-| `vdesk view on` | x11vnc on `127.0.0.1:5900` and websockify on `127.0.0.1:6080`. If `VDESK_VNC_LISTEN` is set, also forwards that IPv4 port 5900. Starts gui first if needed. |
+| `vdesk view on` | x11vnc on `127.0.0.1:5900` and websockify on `127.0.0.1:6080`. In NAT, also forwards eth0's current IPv4 port 5900. Host mode does not add that forwarder. Starts gui first if needed. |
 | `vdesk view off` | Stops only x11vnc and websockify. Chromium keeps its PID. |
 
 `vdesk-idle.timer` runs `vdesk idle` every minute. With no VNC client for `VDESK_IDLE_SEC`, it turns view off and does not restart Chromium. With no VNC client and no CDP client for that long, it switches to headless, which does restart Chromium.
@@ -63,8 +63,8 @@ On that same host, `vdesk-audio.service` reloads `module-aaudio-sink` at 44100 H
 
 ## VNC
 
-`vdesk-vnc.service` runs `/usr/local/libexec/vdesk-x11vnc`. x11vnc itself always uses `-localhost -no6 -noipv6`, which binds `127.0.0.1:5900` only. `-listen` still opened `[::]:5900` on x11vnc 0.9.17 even with `-no6 -noipv6`, so the unit does not use `-listen`. When `VDESK_VNC_LISTEN` is one local IPv4, the helper also binds a forwarder to that address and port 5900. `vdesk view on` stops the units unless those are the only port 5900 listeners.
+`vdesk-vnc.service` runs `/usr/local/libexec/vdesk-x11vnc`. x11vnc itself always uses `-localhost -no6 -noipv6`, which binds `127.0.0.1:5900` only. `-listen` still opened `[::]:5900` on x11vnc 0.9.17 even with `-no6 -noipv6`, so the unit does not use `-listen`. In NAT the helper also binds a forwarder to eth0's current global IPv4. Host mode leaves VNC on `127.0.0.1` only, because that is the phone's loopback. `net_mode=none`, a missing address, or an unsupported mode prints an error and does not start the forwarder. `vdesk view on` stops the units unless those are the only port 5900 listeners.
 
-`vdesk-novnc.service` proxies to `127.0.0.1:5900`, not the hostname `localhost`. On a host with IPv6 disabled, that hostname can still resolve to `::1` and the connection fails. noVNC stays on `127.0.0.1:6080` even when `VDESK_VNC_LISTEN` is set.
+`vdesk-novnc.service` proxies to `127.0.0.1:5900`, not the hostname `localhost`. On a host with IPv6 disabled, that hostname can still resolve to `::1` and the connection fails. noVNC stays on `127.0.0.1:6080` in every network mode.
 
 If `/proc/sys/net/ipv6/conf/all/disable_ipv6` is `1`, `install.sh` removes `localhost` from the `::1` line in `/etc/hosts`. `uninstall.sh` does not restore that line.
