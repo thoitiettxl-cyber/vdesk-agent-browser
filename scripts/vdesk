@@ -461,7 +461,25 @@ cmd_idle() {
 }
 
 reconcile_pulse() {
-  if [[ -S /tmp/.pulse-socket ]]; then
+  local server=""
+  local sock=""
+
+  if [[ -f /run/droidspaces.env ]]; then
+    server=$(sed -n "s/^export PULSE_SERVER='\\([^']*\\)'$/\\1/p" /run/droidspaces.env | head -n 1)
+  fi
+  if [[ -z ${server} && -S /tmp/.pulse-socket ]]; then
+    server="unix:/tmp/.pulse-socket"
+  fi
+  if [[ ${server} == unix:* ]]; then
+    sock=${server#unix:}
+  fi
+  # Chromium drops its environment, so libpulse only keeps this file.
+  # Rewrite it whenever the bridged socket is actually live. A previous boot
+  # deletes the file when the socket is missing, and install.sh does not run again.
+  if [[ -n ${sock} && -S ${sock} && ${server} =~ ^unix:/[^[:space:]\'\"]+$ ]]; then
+    install -d -m 755 /etc/pulse/client.conf.d
+    printf 'default-server = %s\nenable-shm = no\n' "${server}" > /etc/pulse/client.conf.d/vdesk.conf
+    chmod 644 /etc/pulse/client.conf.d/vdesk.conf
     return 0
   fi
   rm -f /etc/pulse/client.conf.d/vdesk.conf

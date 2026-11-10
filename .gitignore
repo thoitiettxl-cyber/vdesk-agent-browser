@@ -4,3 +4,6 @@ plainpass
 .chromium-profile/
 .env
 *.log
+# Machine-local agent state and wrangler cache
+.pi/
+.wrangler/

@@ -217,7 +217,7 @@ Không chạy `apt-get install --reinstall` cho sáu gói đang hold. Lệnh đ�
 | Sau reboot desktop cũng lên | Không đúng với bản này. `systemctl is-enabled vdesk-xvfb` phải là `disabled`. `vdesk status` lúc boot là `mode=headless`. |
 | Sau reboot không có CDP | `systemctl is-enabled vdesk-browser vdesk-apply vdesk-idle.timer` và `vdesk status`. |
 | Đổi mode xong Pi không bấm được | Attach cũ đã chết. Chạy lại `patchright-cli attach --cdp=http://127.0.0.1:9222 --context=host`. |
-| Mở nhạc không có tiếng | Container không có `/dev/snd`. Nếu có socket `/tmp/.pulse-socket`, hoặc `PULSE_SERVER` trong `/etc/profile.d/droidspaces_env.sh`, `install.sh` ghi `/etc/pulse/client.conf.d/vdesk.conf` (`enable-shm = no`). Không đặt lại `PULSE_SERVER` trên unit. Chromium xóa environment sau khi khởi động, nên file client là phần còn hiệu lực. `journalctl -u vdesk-browser` không được còn `PcmOpen: default`. Nếu socket mất lúc boot, file này bị xóa và `vdesk-audio` không chạy. |
+| Mở nhạc không có tiếng | Container không có `/dev/snd`. Nếu có socket `/tmp/.pulse-socket`, `vdesk boot` ghi lại `/etc/pulse/client.conf.d/vdesk.conf` (`enable-shm = no`) trước khi Chromium chạy. Không đặt lại `PULSE_SERVER` trên unit. Chromium xóa environment sau khi khởi động, nên file client là phần còn hiệu lực. `journalctl -u vdesk-browser` không được còn `PcmOpen: default`. Nếu socket mất lúc boot, file này bị xóa và `vdesk-audio` không chạy. |
 | Nhạc nghe kém | Sink AAudio mặc định là 48000 Hz, chế độ low-latency, và resample `speex-float-1`. `vdesk-audio` chỉnh sink về 44100 Hz, `pm=0`, buffer 120 ms. `pactl list sink-inputs` phải thấy `Resample method: copy`. |
 
 ## Gỡ
